@@ -1,0 +1,1630 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>Les Ruines</title>
+<meta name="theme-color" content="#131B15">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Les Ruines">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600&family=Alegreya:ital,wght@0,500;1,400&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --deep:#131B15;      /* fond : terre profonde */
+    --soil:#1C2620;
+    --stone:#33423A;     /* pierre vivante */
+    --moss:#5E8C61;      /* mousse */
+    --copper:#C97B3D;    /* cuivre : trésors, accents */
+    --copper-light:#E8B27D;
+    --ivory:#F0EAD9;     /* l'explorateur */
+    --clay:#B5532F;      /* argile : danger */
+  }
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%;overflow:hidden;background:var(--deep)}
+  body{
+    font-family:'Alegreya',Georgia,serif;
+    color:var(--ivory);
+    touch-action:none;
+    user-select:none;-webkit-user-select:none;
+    overscroll-behavior:none;
+  }
+  #game{display:block;position:fixed;inset:0;width:100%;height:100%}
+
+  /* vignette : on est sous terre */
+  #vignette{
+    position:fixed;inset:0;pointer-events:none;z-index:2;
+    background:radial-gradient(ellipse at 50% 46%, transparent 46%, rgba(7,12,9,.45) 100%);
+  }
+
+  /* ---------- HUD ---------- */
+  #hud{
+    position:fixed;top:max(16px, env(safe-area-inset-top));left:0;right:0;
+    text-align:center;z-index:3;pointer-events:none;
+    opacity:0;transition:opacity .5s ease;
+  }
+  #hud.visible{opacity:1}
+  #score{
+    font-family:'Cinzel',Georgia,serif;
+    font-size:38px;font-weight:600;letter-spacing:.1em;
+    color:var(--ivory);
+    text-shadow:0 2px 14px rgba(0,0,0,.5);
+    line-height:1;
+    transition:color .4s ease, text-shadow .4s ease;
+  }
+  #score.record{color:var(--copper-light);text-shadow:0 0 24px rgba(201,123,61,.65)}
+  #combo{
+    margin-top:3px;font-size:17px;font-style:italic;letter-spacing:.2em;
+    color:var(--copper-light);opacity:0;transition:opacity .25s ease;
+  }
+  #combo.on{opacity:.95}
+
+  /* ---------- Bouton son ---------- */
+  #mute{
+    position:fixed;top:max(14px, env(safe-area-inset-top));right:14px;z-index:6;
+    width:42px;height:42px;border-radius:50%;
+    background:rgba(28,38,32,.6);border:1px solid rgba(201,123,61,.4);
+    color:var(--copper-light);font-size:17px;cursor:pointer;
+    display:flex;align-items:center;justify-content:center;
+    font-family:Georgia,serif;
+  }
+  #mute:focus-visible{outline:2px solid var(--copper);outline-offset:2px}
+
+  /* ---------- Écrans ---------- */
+  .screen{
+    position:fixed;inset:0;z-index:5;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;
+    text-align:center;padding:24px;
+    background:rgba(10,16,12,.5);
+    backdrop-filter:blur(2px);
+    opacity:1;transition:opacity .45s ease;
+  }
+  .screen.hidden{opacity:0;pointer-events:none}
+
+  .crack{width:190px;height:22px;margin-bottom:4px;opacity:.85}
+
+  h1{
+    font-family:'Cinzel',Georgia,serif;
+    font-size:54px;font-weight:600;letter-spacing:.3em;text-indent:.3em;
+    color:var(--ivory);
+    text-shadow:0 3px 0 rgba(0,0,0,.35), 0 0 30px rgba(94,140,97,.25);
+  }
+  .rule{
+    width:130px;height:1px;margin:16px auto 18px;
+    background:linear-gradient(90deg, transparent, var(--copper) 30%, var(--copper) 70%, transparent);
+  }
+  .tagline{
+    font-size:20px;font-style:italic;font-weight:400;
+    color:#A8BFA6;max-width:300px;line-height:1.45;
+  }
+  .ctrl{
+    margin-top:18px;font-size:15.5px;letter-spacing:.03em;line-height:1.5;
+    color:rgba(240,234,217,.62);
+  }
+  .hint{
+    margin-top:40px;font-size:14px;letter-spacing:.3em;text-transform:uppercase;
+    font-family:'Cinzel',Georgia,serif;
+    color:var(--copper-light);animation:breathe 2.8s ease-in-out infinite;
+  }
+  @keyframes breathe{0%,100%{opacity:.45}50%{opacity:1}}
+
+  .best{
+    margin-top:14px;font-size:16px;letter-spacing:.16em;
+    color:rgba(240,234,217,.55);
+  }
+
+  #over h2,#pause h2{
+    font-size:26px;font-weight:400;font-style:italic;letter-spacing:.04em;
+    color:#A8BFA6;
+  }
+  #finalScore{
+    font-family:'Cinzel',Georgia,serif;
+    font-size:76px;font-weight:600;line-height:1.05;margin-top:10px;
+    color:var(--ivory);text-shadow:0 4px 0 rgba(0,0,0,.35);
+  }
+  #newBest{
+    margin-top:6px;font-size:15px;letter-spacing:.3em;text-transform:uppercase;
+    font-family:'Cinzel',Georgia,serif;
+    color:var(--copper-light);display:none;
+  }
+  #newBest.show{display:block;animation:breathe 2s ease-in-out infinite}
+  #overBest{margin-top:14px;font-size:17px;letter-spacing:.14em;color:rgba(240,234,217,.6)}
+
+  #replay{
+    margin-top:38px;padding:15px 50px;
+    font-family:'Cinzel',Georgia,serif;
+    font-size:17px;letter-spacing:.28em;text-transform:uppercase;text-indent:.28em;
+    color:var(--ivory);background:transparent;cursor:pointer;
+    border:1px solid var(--copper);border-radius:2px;
+    transition:background .25s, box-shadow .25s;
+  }
+  #replay:hover,#replay:focus-visible{
+    background:rgba(201,123,61,.14);
+    box-shadow:0 0 24px rgba(201,123,61,.25);
+    outline:none;
+  }
+
+  @media (max-height:600px){
+    h1{font-size:40px}
+    #finalScore{font-size:56px}
+    .hint{margin-top:24px}
+  }
+  @media (prefers-reduced-motion:reduce){
+    .hint,#newBest.show{animation:none;opacity:1}
+  }
+</style>
+</head>
+<body>
+
+<canvas id="game"></canvas>
+<div id="vignette"></div>
+
+<div id="hud" aria-live="off">
+  <div id="score">0</div>
+  <div id="combo"></div>
+</div>
+
+<button id="mute" aria-label="Volume">♪</button>
+
+<!-- Écran titre -->
+<div id="menu" class="screen">
+  <svg class="crack" viewBox="0 0 190 22" fill="none" aria-hidden="true">
+    <path d="M6 14 L34 9 L58 15 L92 6 L121 14 L152 8 L184 12" stroke="#C97B3D" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+  </svg>
+  <h1>LES RUINES</h1>
+  <div class="rule"></div>
+  <p class="tagline">La pierre est vivante.<br>Ses trésors ne t&rsquo;attendent pas.</p>
+  <p class="ctrl">Pose le pouce sur le médaillon en bas et incline : il court.<br>Lâche, il s&rsquo;arrête. Fuis les passages qui se referment.</p>
+  <div class="hint">Touche l&rsquo;écran pour descendre</div>
+  <div class="best" id="menuBest"></div>
+</div>
+
+<!-- Écran de fin -->
+<div id="over" class="screen hidden">
+  <h2>La pierre t&rsquo;a recouvert&hellip;</h2>
+  <div id="finalScore">0</div>
+  <div id="newBest">◆ Nouveau record ◆</div>
+  <div id="overBest"></div>
+  <button id="replay">Recreuser</button>
+</div>
+
+<!-- Écran de pause -->
+<div id="pause" class="screen hidden">
+  <h2>En pause</h2>
+  <div class="hint">Touche l&rsquo;écran pour reprendre</div>
+</div>
+
+<script>
+'use strict';
+
+/* ============================================================
+   LES RUINES — le labyrinthe vivant
+   Une structure de pierre qui respire, se reconfigure par
+   vagues, et un explorateur qui déterre ses éclats de cuivre.
+   Palette : pierre #33423A · mousse #5E8C61 · cuivre #C97B3D
+   ============================================================ */
+
+// ---------- Constantes d'équilibrage ----------
+const TREASURE_PTS  = 25;    // points par trésor (× combo)
+const COMBO_WINDOW  = 4;     // s pour enchaîner les trésors
+const TREASURE_LIFE = 6;     // durée de vie d'un trésor (s)
+const TREASURE_CAP  = 3;     // trésors simultanés max
+const SPAWN_DELAY   = 1.3;   // délai moyen entre apparitions (s)
+const BIG_CHANCE    = 0.14;  // proba qu'un trésor soit une relique (1 max à la fois)
+const BIG_MULT      = 5;     // valeur de la relique (× trésor normal, × combo)
+const BIG_LIFE      = 4.5;   // durée de vie de la relique (s) — un sprint, pas une cueillette
+const WAVE_START    = 4.0;   // intervalle entre vagues au départ (s)
+const WAVE_MIN      = 1.6;   // intervalle plancher (s)
+const TELE_START    = 1.5;   // durée du télégraphe au départ (s)
+const TELE_MIN      = 0.8;   // télégraphe plancher (s)
+const REGION        = 0.55;  // étendue d'une vague (0.55² ≈ 30 % des salles)
+const BRAID         = 0.14;  // proportion de boucles (anti-impasses)
+const LOOP_EXTRA    = 0.14;  // boucles rajoutées à chaque vague
+const SPEED_CELLS   = 5.6;   // vitesse max du perso (cases/s)
+const RAD_CELLS     = 0.30;  // rayon du perso (× case)
+const JOY_DEAD      = 9;     // zone morte du joystick flottant (px)
+const JOY_FULL      = 30;    // rayon de dérive de l'ancre (px)
+const PICK_FIRST    = 10;    // première pioche (s)
+const PICK_RESPAWN  = 16;    // délai moyen entre pioches (s), après la fin de la fenêtre
+const PICK_LIFE     = 9;     // durée de la pioche au sol (s)
+const PICK_DURATION = 7;     // fenêtre de possession : casse illimitée (s)
+const DIG_HOLD      = 0.15;  // poussée maintenue contre le mur pour creuser (s)
+
+const IVORY = '#F0EAD9', COPPER = '#C97B3D', COPPER_LIGHT = '#E8B27D';
+const CLAY = '#B5532F', MOSS = '#5E8C61';
+
+// ---------- Canvas ----------
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+let W = 0, H = 0, DPR = 1;
+
+// ---------- Éléments UI ----------
+const ui = {
+  hud:        document.getElementById('hud'),
+  score:      document.getElementById('score'),
+  combo:      document.getElementById('combo'),
+  menu:       document.getElementById('menu'),
+  menuBest:   document.getElementById('menuBest'),
+  over:       document.getElementById('over'),
+  finalScore: document.getElementById('finalScore'),
+  newBest:    document.getElementById('newBest'),
+  overBest:   document.getElementById('overBest'),
+  replay:     document.getElementById('replay'),
+  pause:      document.getElementById('pause'),
+  mute:       document.getElementById('mute'),
+};
+
+const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+// ---------- État ----------
+let state = 'menu';          // menu | playing | dying | over | paused
+let score = 0, displayedScore = -1;
+let combo = 0, comboTimer = 0;
+let collected = 0;           // trésors ramassés (pilote la difficulté)
+let elapsed = 0;
+let dyingTimer = 0;
+let shake = 0, flash = 0;
+let recordBeaten = false;
+let tnow = 0;                // horloge visuelle (respiration des murs)
+let creakT = 5;              // craquements aléatoires d'ambiance
+let spawnT = 1;
+
+const player = { x:0, y:0, tx:0, ty:0, rad:8, walk:0, fx:1, fy:0, blinkT:2, moving:0 };
+let treasures = [], particles = [], rings = [], texts = [], spores = [];
+// la pioche : fenêtre rare de casse illimitée sur les connecteurs fermés
+let pick = null, hasPick = false, pickT = PICK_FIRST, pickTime = 0, digT = 0;
+let massifShown = false, pickHintShown = false;
+let lastStep = 0, pickTickT = 0, rumbTick = 0;   // pas, alerte pioche, grondement
+const keys = {};
+
+// ---------- Labyrinthe ----------
+// Grille en blocs : les salles (coordonnées impaires) sont TOUJOURS du sol,
+// les piliers (coordonnées paires) TOUJOURS du mur. Seuls les connecteurs
+// basculent → le joueur a toujours un refuge adjacent : équité par géométrie.
+let Rx = 0, Ry = 0;          // salles en x / y
+let gw = 0, gh = 0;          // grille en cases (murs compris)
+let cell = 26, originX = 0, originY = 0;
+let wall = null;             // Uint8Array : 1 = mur
+let openE = new Set();       // arêtes (connecteurs) ouvertes
+let tele = null;             // vague en cours de télégraphe
+let waveTimer = 3;
+
+function eH(i, j){ return 'h' + i + ',' + j; }
+function eV(i, j){ return 'v' + i + ',' + j; }
+function edgeCell(e){
+  const p = e.slice(1).split(',');
+  const i = +p[0], j = +p[1];
+  return e[0] === 'h' ? { x: 2*i+2, y: 2*j+1 } : { x: 2*i+1, y: 2*j+2 };
+}
+function edgeRooms(e){
+  const p = e.slice(1).split(',');
+  const i = +p[0], j = +p[1];
+  return e[0] === 'h' ? [[i,j],[i+1,j]] : [[i,j],[i,j+1]];
+}
+function rid(i, j){ return j * Rx + i; }
+function wIdx(x, y){ return y * gw + x; }
+function forEachEdge(fn){
+  for (let j = 0; j < Ry; j++) for (let i = 0; i < Rx; i++){
+    if (i < Rx - 1) fn(eH(i, j));
+    if (j < Ry - 1) fn(eV(i, j));
+  }
+}
+function hash01(x, y){
+  const s = Math.sin(x * 127.1 + y * 311.7) * 43758.5453;
+  return s - Math.floor(s);
+}
+
+// bande de contrôle en bas : le pouce ne masque jamais le labyrinthe
+function ctrlH(){ return Math.max(100, Math.min(150, H * 0.16)); }
+
+function computeLayout(){
+  const topPad = 84, botPad = ctrlH() + 10, sidePad = 8;
+  cell = Math.min((W - sidePad * 2) / gw, (H - topPad - botPad) / gh);
+  originX = (W - gw * cell) / 2;
+  originY = topPad + ((H - topPad - botPad) - gh * cell) / 2;
+  player.rad = cell * RAD_CELLS;
+}
+
+function newMaze(){
+  const tc = Math.min(34, Math.max(22, W / 15));
+  Rx = Math.max(5, Math.min(12, Math.floor(((W - 16) / tc - 1) / 2)));
+  Ry = Math.max(6, Math.min(18, Math.floor(((H - 94 - ctrlH()) / tc - 1) / 2)));
+  gw = 2 * Rx + 1; gh = 2 * Ry + 1;
+  openE = new Set();
+  tele = null;
+
+  // génération : remonte-arrière itératif → labyrinthe parfait (connecté)
+  const seen = new Uint8Array(Rx * Ry);
+  const start = [Math.floor(Rx / 2), Math.floor(Ry / 2)];
+  seen[rid(start[0], start[1])] = 1;
+  const stack = [start];
+  while (stack.length){
+    const top = stack[stack.length - 1];
+    const i = top[0], j = top[1];
+    const nb = [];
+    if (i > 0      && !seen[rid(i-1, j)]) nb.push([i-1, j, eH(i-1, j)]);
+    if (i < Rx - 1 && !seen[rid(i+1, j)]) nb.push([i+1, j, eH(i, j)]);
+    if (j > 0      && !seen[rid(i, j-1)]) nb.push([i, j-1, eV(i, j-1)]);
+    if (j < Ry - 1 && !seen[rid(i, j+1)]) nb.push([i, j+1, eV(i, j)]);
+    if (!nb.length){ stack.pop(); continue; }
+    const n = nb[Math.floor(Math.random() * nb.length)];
+    seen[rid(n[0], n[1])] = 1;
+    openE.add(n[2]);
+    stack.push([n[0], n[1]]);
+  }
+  // tressage : des boucles, pas d'impasses piégeuses
+  forEachEdge((e) => { if (!openE.has(e) && Math.random() < BRAID) openE.add(e); });
+  buildWalls();
+  computeLayout();
+}
+
+function buildWalls(){
+  wall = new Uint8Array(gw * gh).fill(1);
+  for (let j = 0; j < Ry; j++) for (let i = 0; i < Rx; i++) wall[wIdx(2*i+1, 2*j+1)] = 0;
+  openE.forEach((e) => { const c = edgeCell(e); wall[wIdx(c.x, c.y)] = 0; });
+}
+
+// ---------- Vagues : le labyrinthe se reconfigure ----------
+// Une région (~30 % des salles) est re-câblée : arbre couvrant aléatoire
+// + boucles. L'union-find garantit que TOUT reste connecté après la vague.
+function teleDur(){
+  if (state !== 'playing') return 1.6;
+  return Math.max(TELE_MIN, TELE_START - elapsed * 0.005 - collected * 0.012);
+}
+function waveDelay(){
+  if (state !== 'playing') return 4.5;
+  return Math.max(WAVE_MIN, WAVE_START - elapsed * 0.022 - collected * 0.045);
+}
+
+function makeWave(){
+  const rw = Math.max(2, Math.round(Rx * REGION));
+  const rh = Math.max(2, Math.round(Ry * REGION));
+  const x0 = Math.floor(Math.random() * (Rx - rw + 1));
+  const y0 = Math.floor(Math.random() * (Ry - rh + 1));
+  const inR = (i, j) => i >= x0 && i < x0 + rw && j >= y0 && j < y0 + rh;
+
+  const cand = [];
+  forEachEdge((e) => {
+    const r = edgeRooms(e);
+    if (inR(r[0][0], r[0][1]) && inR(r[1][0], r[1][1])) cand.push(e);
+  });
+  if (cand.length < 4) return false;
+
+  // union-find sur toutes les salles avec les arêtes hors région
+  const parent = new Int32Array(Rx * Ry);
+  for (let k = 0; k < parent.length; k++) parent[k] = k;
+  const find = (a) => { while (parent[a] !== a){ parent[a] = parent[parent[a]]; a = parent[a]; } return a; };
+  const candSet = new Set(cand);
+  openE.forEach((e) => {
+    if (candSet.has(e)) return;
+    const r = edgeRooms(e);
+    const a = find(rid(r[0][0], r[0][1])), b = find(rid(r[1][0], r[1][1]));
+    if (a !== b) parent[a] = b;
+  });
+
+  // mélange
+  for (let k = cand.length - 1; k > 0; k--){
+    const m = Math.floor(Math.random() * (k + 1));
+    const t = cand[k]; cand[k] = cand[m]; cand[m] = t;
+  }
+  // re-câblage : arbre couvrant + boucles
+  const newOpen = new Set();
+  for (let k = 0; k < cand.length; k++){
+    const r = edgeRooms(cand[k]);
+    const a = find(rid(r[0][0], r[0][1])), b = find(rid(r[1][0], r[1][1]));
+    if (a !== b){ parent[a] = b; newOpen.add(cand[k]); }
+  }
+  for (let k = 0; k < cand.length; k++){
+    if (!newOpen.has(cand[k]) && Math.random() < LOOP_EXTRA) newOpen.add(cand[k]);
+  }
+
+  const closing = [], opening = [];
+  for (let k = 0; k < cand.length; k++){
+    const e = cand[k];
+    if (openE.has(e) && !newOpen.has(e)) closing.push(e);
+    else if (!openE.has(e) && newOpen.has(e)) opening.push(e);
+  }
+  if (!closing.length && !opening.length) return false;
+
+  const d = teleDur();
+  tele = {
+    dur: d, t: d, tickT: 0,
+    eClose: closing, eOpen: opening,
+    cClose: closing.map(edgeCell), cOpen: opening.map(edgeCell),
+  };
+  return true;
+}
+
+function applyWave(){
+  const w = tele; tele = null;
+  for (const e of w.eClose) openE.delete(e);
+  for (const e of w.eOpen)  openE.add(e);
+
+  let minD = 1e9;
+  // murs qui s'effritent (passages ouverts)
+  for (const c of w.cOpen){
+    wall[wIdx(c.x, c.y)] = 0;
+    burst(originX + (c.x + 0.5) * cell, originY + (c.y + 0.5) * cell,
+          reducedMotion ? 2 : 6, 90, '#54655B');
+  }
+  // murs qui se referment
+  for (const c of w.cClose){
+    wall[wIdx(c.x, c.y)] = 1;
+    const L = originX + c.x * cell, T = originY + c.y * cell;
+    burst(L + cell / 2, T + cell / 2, reducedMotion ? 2 : 5, 70, '#3A4A40');
+
+    if (state === 'playing'){
+      const nx = Math.max(L, Math.min(L + cell, player.x));
+      const ny = Math.max(T, Math.min(T + cell, player.y));
+      const dx = player.x - nx, dy = player.y - ny;
+      const dist = Math.hypot(dx, dy);
+      minD = Math.min(minD, Math.hypot(player.x - (L + cell/2), player.y - (T + cell/2)));
+      const inside = player.x > L && player.x < L + cell && player.y > T && player.y < T + cell;
+      if (inside){ die(); return; }
+      if (dist < player.rad){
+        // frôlé de peu : la pierre repousse l'explorateur
+        const f = (player.rad - dist + 1) / (dist || 1);
+        player.x += dx * f; player.y += dy * f;
+        player.tx = player.x; player.ty = player.y;
+      }
+    }
+  }
+  if (w.cClose.length){
+    playRumble();
+    if (!reducedMotion) shake = Math.max(shake, 3);
+    if (state === 'playing' && minD < cell * 2.5) buzz(25);
+  } else if (w.cOpen.length){
+    playCrumble();
+  }
+}
+
+// ---------- Trésors : éclats de cuivre ----------
+// Toujours dans des salles (jamais écrasés). Apparaissent loin du joueur
+// pour le forcer à traverser la pierre en mouvement. Durée de vie limitée.
+function roomDistances(si, sj){
+  const d = new Int16Array(Rx * Ry).fill(-1);
+  const q = [rid(si, sj)];
+  d[q[0]] = 0;
+  let h = 0;
+  while (h < q.length){
+    const cur = q[h++];
+    const i = cur % Rx, j = (cur - i) / Rx;
+    const push = (ni, nj) => { const k = rid(ni, nj); if (d[k] < 0){ d[k] = d[cur] + 1; q.push(k); } };
+    if (i > 0      && openE.has(eH(i-1, j))) push(i-1, j);
+    if (i < Rx - 1 && openE.has(eH(i, j)))   push(i+1, j);
+    if (j > 0      && openE.has(eV(i, j-1))) push(i, j-1);
+    if (j < Ry - 1 && openE.has(eV(i, j)))   push(i, j+1);
+  }
+  return d;
+}
+function playerRoom(){
+  const i = Math.max(0, Math.min(Rx - 1, Math.round(((player.x - originX) / cell - 1) / 2)));
+  const j = Math.max(0, Math.min(Ry - 1, Math.round(((player.y - originY) / cell - 1) / 2)));
+  return [i, j];
+}
+function spawnTreasure(){
+  const pr = playerRoom();
+  const d = roomDistances(pr[0], pr[1]);
+  // relique : rare, une seule à la fois, posée plus loin
+  let hasBig = false;
+  for (const t of treasures) if (t.big){ hasBig = true; break; }
+  const big = !hasBig && Math.random() < BIG_CHANCE;
+  const lo = big ? 6 : 4, hi = big ? 13 : 14;
+  const far = [], any = [];
+  for (let k = 0; k < d.length; k++){
+    const i = k % Rx, j = (k - i) / Rx;
+    if (i === pr[0] && j === pr[1]) continue;
+    if (pick && pick.i === i && pick.j === j) continue;
+    let taken = false;
+    for (const t of treasures) if (t.i === i && t.j === j){ taken = true; break; }
+    if (taken) continue;
+    any.push(k);
+    if (d[k] >= lo && d[k] <= hi) far.push(k);
+  }
+  const pool = far.length ? far : any;
+  if (!pool.length) return;
+  const k = pool[Math.floor(Math.random() * pool.length)];
+  const i = k % Rx, j = (k - i) / Rx;
+  const t = {
+    i, j, big,
+    x: originX + (2*i + 1.5) * cell,
+    y: originY + (2*j + 1.5) * cell,
+    life: big ? BIG_LIFE : TREASURE_LIFE,
+    rot: Math.random() * Math.PI,
+  };
+  treasures.push(t);
+  if (big){ addRing(t.x, t.y); playBigSpawn(); }
+}
+function collectTreasure(t){
+  combo = comboTimer > 0 ? combo + 1 : 1;
+  comboTimer = COMBO_WINDOW;
+  const pts = TREASURE_PTS * (t.big ? BIG_MULT : 1) * combo;
+  score += pts;
+  collected++;
+  addText(t.x, t.y - 14, '+' + pts, t.big || combo >= 3);
+  addRing(t.x, t.y);
+  if (t.big){
+    rings.push({ x: t.x, y: t.y, r: 26, life: 1 });
+    burst(t.x, t.y, reducedMotion ? 8 : 24, 200, COPPER_LIGHT);
+    playRelic(combo);
+    buzz(30);
+    if (!reducedMotion) shake = Math.max(shake, 3);
+  } else {
+    burst(t.x, t.y, reducedMotion ? 4 : 12, 150, COPPER_LIGHT);
+    playChime(combo);
+    buzz(15);
+  }
+}
+
+// ---------- La pioche ----------
+// Rare, une seule charge. Elle ne casse que les CONNECTEURS fermés (jamais
+// les piliers) : le graphe du labyrinthe reste cohérent, et ajouter une
+// arête ne peut jamais briser la connectivité → équité intacte.
+function spawnPick(){
+  const pr = playerRoom();
+  const d = roomDistances(pr[0], pr[1]);
+  const far = [], any = [];
+  for (let k = 0; k < d.length; k++){
+    const i = k % Rx, j = (k - i) / Rx;
+    if (i === pr[0] && j === pr[1]) continue;
+    let taken = false;
+    for (const t of treasures) if (t.i === i && t.j === j){ taken = true; break; }
+    if (taken) continue;
+    any.push(k);
+    if (d[k] >= 5 && d[k] <= 12) far.push(k);
+  }
+  const pool = far.length ? far : any;
+  if (!pool.length){ pickT = 2; return; }
+  const k = pool[Math.floor(Math.random() * pool.length)];
+  const i = k % Rx, j = (k - i) / Rx;
+  pick = {
+    i, j,
+    x: originX + (2*i + 1.5) * cell,
+    y: originY + (2*j + 1.5) * cell,
+    life: PICK_LIFE,
+    rot: Math.random() * 6,
+  };
+}
+function isBreakable(cx, cy){
+  if (cx <= 0 || cy <= 0 || cx >= gw - 1 || cy >= gh - 1) return false;  // enceinte
+  if (!wall[wIdx(cx, cy)]) return false;
+  return (cx + cy) % 2 === 1;   // connecteur — jamais un pilier
+}
+function breakWall(cx, cy){
+  let e;
+  if (cy % 2 === 1) e = eH((cx - 2) / 2, (cy - 1) / 2);   // connecteur horizontal
+  else              e = eV((cx - 1) / 2, (cy - 2) / 2);   // connecteur vertical
+  openE.add(e);
+  wall[wIdx(cx, cy)] = 0;
+  digT = 0;   // pas de consommation : la fenêtre de possession fait foi
+  const x = originX + (cx + 0.5) * cell, y = originY + (cy + 0.5) * cell;
+  burst(x, y, reducedMotion ? 5 : 14, 160, '#54655B');
+  burst(x, y, reducedMotion ? 2 : 6, 120, '#8A9B90');
+  addRing(x, y);
+  addText(x, y - 10, 'percé !', true);
+  playBreak();
+  buzz(35);
+  if (!reducedMotion) shake = Math.max(shake, 4);
+}
+
+// ---------- Effets ----------
+function burst(x, y, n, spd, color){
+  for (let i = 0; i < n; i++){
+    const a = Math.random() * Math.PI * 2;
+    const v = spd * (0.3 + Math.random() * 0.9);
+    particles.push({
+      x, y,
+      vx: Math.cos(a) * v, vy: Math.sin(a) * v - 30,
+      r: 1 + Math.random() * 2.4,
+      life: 1, decay: 0.9 + Math.random() * 1.1,
+      color: color || IVORY,
+    });
+  }
+}
+function addRing(x, y){ rings.push({ x, y, r: 12, life: 1 }); }
+function addText(x, y, str, big){
+  texts.push({ x: Math.min(W - 46, Math.max(46, x)), y, str, life: 1, big: !!big });
+}
+function makeSpores(){
+  spores = [];
+  const n = Math.floor((W * H) / 26000);
+  for (let i = 0; i < n; i++){
+    spores.push({
+      x: Math.random() * W, y: Math.random() * H,
+      r: 0.6 + Math.random() * 1.4,
+      vy: 6 + Math.random() * 14,
+      ph: Math.random() * Math.PI * 2,
+      a: 0.05 + Math.random() * 0.12,
+    });
+  }
+}
+
+// ---------- Persistance du record ----------
+let best = 0;
+async function loadBest(){
+  try{
+    if (window.storage){
+      const r = await window.storage.get('ruines-best');
+      if (r && r.value) return parseInt(r.value, 10) || 0;
+    }
+  }catch(e){}
+  try{
+    if (typeof localStorage !== 'undefined'){
+      const v = localStorage.getItem('ruines-best');
+      if (v) return parseInt(v, 10) || 0;
+    }
+  }catch(e){}
+  return 0;
+}
+async function saveBest(v){
+  try{ if (window.storage){ await window.storage.set('ruines-best', String(v)); return; } }catch(e){}
+  try{ if (typeof localStorage !== 'undefined') localStorage.setItem('ruines-best', String(v)); }catch(e){}
+}
+
+// ---------- Audio (Web Audio, tout synthétisé) ----------
+let audioCtx = null, master = null, muted = false;
+const VOLUMES = [
+  { label: '♪',  v: 1,    name: 'normal' },
+  { label: '♪+', v: 1.7,  name: 'fort' },
+  { label: '♪−', v: 0.45, name: 'bas' },
+  { label: '∅',  v: 0,    name: 'coupé' },
+];
+let volLevel = 0;
+function initAudio(){
+  if (muted) return;
+  if (audioCtx){
+    // iOS suspend parfois le contexte même après un geste : on le relance
+    if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
+    return;
+  }
+  try{
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    master = audioCtx.createGain();
+    master.gain.value = VOLUMES[volLevel].v;
+    master.connect(audioCtx.destination);
+    if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
+  }catch(e){}
+}
+function tone(freq, dur, type, vol, when){
+  if (!audioCtx || muted) return;
+  const t = audioCtx.currentTime + (when || 0);
+  const o = audioCtx.createOscillator();
+  const g = audioCtx.createGain();
+  o.type = type; o.frequency.value = freq;
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(vol, t + 0.012);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  o.connect(g); g.connect(master);
+  o.start(t); o.stop(t + dur + 0.05);
+}
+function sweep(f0, f1, dur, type, vol, when){
+  if (!audioCtx || muted) return;
+  const t = audioCtx.currentTime + (when || 0);
+  const o = audioCtx.createOscillator();
+  const g = audioCtx.createGain();
+  o.type = type;
+  o.frequency.setValueAtTime(f0, t);
+  o.frequency.exponentialRampToValueAtTime(Math.max(f1, 1), t + dur);
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(vol, t + 0.015);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  o.connect(g); g.connect(master);
+  o.start(t); o.stop(t + dur + 0.05);
+}
+function noiseBurst(dur, type, f0, f1, vol, when){
+  if (!audioCtx || muted) return;
+  const t = audioCtx.currentTime + (when || 0);
+  const sr = audioCtx.sampleRate;
+  const buf = audioCtx.createBuffer(1, Math.max(1, Math.floor(sr * dur)), sr);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / d.length);
+  const src = audioCtx.createBufferSource(); src.buffer = buf;
+  const f = audioCtx.createBiquadFilter(); f.type = type;
+  f.frequency.setValueAtTime(f0, t);
+  if (f1 && f1 !== f0) f.frequency.exponentialRampToValueAtTime(f1, t + dur);
+  const g = audioCtx.createGain();
+  g.gain.setValueAtTime(vol, t);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  src.connect(f); f.connect(g); g.connect(master);
+  src.start(t);
+}
+// grondement : la pierre se referme
+function playRumble(){
+  noiseBurst(0.65, 'lowpass', 380, 44, 0.55);
+  sweep(95, 36, 0.5, 'sine', 0.3);
+}
+// effritement : un passage s'ouvre
+function playCrumble(){ noiseBurst(0.3, 'bandpass', 720, 240, 0.2); }
+// crépitement du télégraphe (cadencé depuis update)
+function playTick(){ noiseBurst(0.03, 'bandpass', 1900, 1500, 0.055); }
+// carillon des trésors : gamme pentatonique qui monte avec le combo
+const PENTA = [392, 440, 494, 587, 659, 784, 880, 988];
+function playChime(c){
+  const f = PENTA[Math.min(c - 1, PENTA.length - 1)];
+  tone(f, 0.18, 'sine', 0.16);
+  tone(f * 2, 0.28, 'sine', 0.055, 0.04);
+}
+// la relique : accord plein à la collecte, cloche grave à l'apparition
+function playRelic(c){
+  const f = PENTA[Math.min(c - 1, PENTA.length - 1)];
+  tone(f * 0.5, 0.32, 'sine', 0.15);
+  tone(f, 0.28, 'sine', 0.15, 0.03);
+  tone(f * 1.5, 0.36, 'sine', 0.1, 0.08);
+  tone(f * 2, 0.42, 'sine', 0.06, 0.13);
+}
+function playBigSpawn(){
+  tone(196, 0.55, 'sine', 0.11);
+  tone(294, 0.6, 'sine', 0.055, 0.14);
+}
+function playDeath(){
+  sweep(110, 26, 1.1, 'sine', 0.4);
+  noiseBurst(1.0, 'lowpass', 800, 38, 0.5);
+}
+function playStart(){ sweep(70, 52, 0.4, 'sine', 0.16); tone(330, 0.3, 'sine', 0.06, 0.12); }
+function playRecord(){
+  tone(523, 0.14, 'sine', 0.12);
+  tone(659, 0.16, 'sine', 0.11, 0.09);
+  tone(1046, 0.3, 'sine', 0.09, 0.18);
+}
+// craquement d'ambiance : la structure vit
+function playCreak(){ sweep(115 + Math.random() * 30, 70, 0.7, 'triangle', 0.045); }
+// la pioche
+function playPickup(){ tone(740, 0.1, 'square', 0.045); tone(1180, 0.16, 'sine', 0.1, 0.05); }
+function playBreak(){
+  noiseBurst(0.25, 'highpass', 900, 2400, 0.3);
+  noiseBurst(0.4, 'lowpass', 500, 60, 0.45, 0.02);
+  sweep(180, 70, 0.25, 'triangle', 0.18);
+}
+function playThunk(){ tone(95, 0.12, 'triangle', 0.18); noiseBurst(0.08, 'lowpass', 300, 160, 0.12); }
+// pas feutrés sur pierre humide : très bas dans le mixage, hauteur variable
+function playStep(){
+  noiseBurst(0.05, 'bandpass', 340 + Math.random() * 220, 260, 0.05);
+  tone(110 + Math.random() * 40, 0.05, 'triangle', 0.022);
+}
+// tic métallique : la fenêtre de pioche se referme
+function playPickTick(){ tone(1320 + Math.random() * 120, 0.035, 'square', 0.038); }
+
+// nappe d'ambiance : la respiration de la pierre (LFO lent sur un bourdon)
+let amb = null;
+function startAmbient(){
+  if (!audioCtx || muted || amb) return;
+  const o1 = audioCtx.createOscillator();
+  const o2 = audioCtx.createOscillator();
+  o1.type = 'triangle'; o2.type = 'triangle';
+  o1.frequency.value = 55; o2.frequency.value = 55.7;
+  const f = audioCtx.createBiquadFilter();
+  f.type = 'lowpass'; f.frequency.value = 220;
+  const g = audioCtx.createGain();
+  g.gain.value = 0.0001;
+  g.gain.setTargetAtTime(0.05, audioCtx.currentTime, 0.8);
+  const lfo = audioCtx.createOscillator();
+  lfo.frequency.value = 0.09;
+  const lg = audioCtx.createGain();
+  lg.gain.value = 0.03;
+  lfo.connect(lg); lg.connect(g.gain);
+  o1.connect(f); o2.connect(f); f.connect(g); g.connect(master);
+  o1.start(); o2.start(); lfo.start();
+  // grondement de proximité : boucle de bruit très grave, muette par défaut —
+  // son gain monte quand des cases se referment près du joueur (cf. update)
+  const rb = audioCtx.createBuffer(1, audioCtx.sampleRate, audioCtx.sampleRate);
+  const rd = rb.getChannelData(0);
+  for (let i = 0; i < rd.length; i++) rd[i] = Math.random() * 2 - 1;
+  const rs = audioCtx.createBufferSource();
+  rs.buffer = rb; rs.loop = true;
+  const rf = audioCtx.createBiquadFilter();
+  rf.type = 'lowpass'; rf.frequency.value = 85;
+  const rg = audioCtx.createGain();
+  rg.gain.value = 0.0001;
+  rs.connect(rf); rf.connect(rg); rg.connect(master);
+  rs.start();
+  amb = { o1, o2, lfo, g, rs, rg };
+}
+function stopAmbient(){
+  if (!amb || !audioCtx) return;
+  const a = amb; amb = null;
+  try{
+    const t = audioCtx.currentTime;
+    a.g.gain.cancelScheduledValues(t);
+    a.g.gain.setTargetAtTime(0.0001, t, 0.2);
+    a.rg.gain.cancelScheduledValues(t);
+    a.rg.gain.setTargetAtTime(0.0001, t, 0.15);
+    a.o1.stop(t + 1); a.o2.stop(t + 1); a.lfo.stop(t + 1); a.rs.stop(t + 1);
+  }catch(e){}
+}
+function buzz(p){
+  try{ if (navigator.vibrate) navigator.vibrate(p); }catch(e){}
+}
+
+ui.mute.addEventListener('click', (e) => {
+  e.stopPropagation();
+  volLevel = (volLevel + 1) % VOLUMES.length;
+  const v = VOLUMES[volLevel];
+  muted = v.v === 0;
+  ui.mute.textContent = v.label;
+  ui.mute.setAttribute('aria-label', 'Volume : ' + v.name);
+  if (!muted) initAudio();
+  if (master) master.gain.setTargetAtTime(Math.max(v.v, 0.0001), audioCtx.currentTime, 0.05);
+  if (muted) stopAmbient();
+  else if (state === 'playing') startAmbient();
+});
+
+// ---------- Déroulement ----------
+function startGame(){
+  newMaze();
+  treasures = []; particles = []; rings = []; texts = [];
+  score = 0; displayedScore = -1; combo = 0; comboTimer = 0;
+  collected = 0; elapsed = 0; shake = 0; flash = 0;
+  recordBeaten = false;
+  ui.score.classList.remove('record');
+  const ci = Math.floor(Rx / 2), cj = Math.floor(Ry / 2);
+  player.x = player.tx = originX + (2*ci + 1.5) * cell;
+  player.y = player.ty = originY + (2*cj + 1.5) * cell;
+  player.fx = 0; player.fy = -1; player.walk = 0;
+  waveTimer = 3;
+  spawnT = 0.6;
+  pick = null; hasPick = false; pickT = PICK_FIRST; pickTime = 0; digT = 0;
+  massifShown = false; pickHintShown = false;
+  state = 'playing';
+  ui.menu.classList.add('hidden');
+  ui.over.classList.add('hidden');
+  ui.hud.classList.add('visible');
+  initAudio(); playStart();
+  startAmbient();
+}
+
+function die(){
+  state = 'dying';
+  dyingTimer = 0;
+  combo = 0;
+  tele = null;
+  burst(player.x, player.y, reducedMotion ? 18 : 46, 280, IVORY);
+  burst(player.x, player.y, reducedMotion ? 6 : 16, 160, '#54655B');
+  addRing(player.x, player.y);
+  flash = 0.45;
+  if (!reducedMotion) shake = 12;
+  stopAmbient();
+  playDeath();
+  buzz(180);
+  ui.hud.classList.remove('visible');
+}
+
+async function endGame(){
+  state = 'over';
+  const final = Math.floor(score);
+  ui.finalScore.textContent = final;
+  if (final > best){
+    best = final;
+    ui.newBest.classList.add('show');
+    ui.overBest.textContent = 'Record · ' + best;
+    await saveBest(best);
+  } else {
+    ui.newBest.classList.remove('show');
+    const diff = best - final;
+    ui.overBest.textContent = (best > 0 && diff > 0)
+      ? 'Record · ' + best + '  ·  à ' + diff + ' points'
+      : 'Record · ' + best;
+  }
+  ui.over.classList.remove('hidden');
+}
+
+// ---------- Entrées ----------
+// Joystick flottant : l'ancre se pose là où le doigt touche ; le vecteur
+// ancre → doigt donne la direction. L'ancre DÉRIVE (jamais à plus de
+// JOY_FULL du doigt) → les demi-tours sont instantanés. Doigt levé = stop.
+let dragging = false, primaryId = null;
+let anchorX = 0, anchorY = 0, fingX = 0, fingY = 0;
+
+function grabPointer(e){
+  primaryId = e.pointerId;
+  dragging = true;
+  anchorX = fingX = e.clientX;
+  anchorY = fingY = e.clientY;
+}
+
+window.addEventListener('pointermove', (e) => {
+  if (state !== 'playing') return;
+  const isTouch = e.pointerType === 'touch';
+  if (!dragging){
+    // auto-récupération : si le suivi s'est perdu (pointercancel, geste
+    // système…), un doigt posé qui bouge reprend le contrôle sans à-coup
+    if (isTouch || (e.buttons & 1)) grabPointer(e);
+    return;
+  }
+  if (e.pointerId !== primaryId) return;
+  fingX = e.clientX; fingY = e.clientY;
+  const jx = fingX - anchorX, jy = fingY - anchorY;
+  const mag = Math.hypot(jx, jy);
+  if (mag > JOY_FULL){
+    anchorX = fingX - jx / mag * JOY_FULL;
+    anchorY = fingY - jy / mag * JOY_FULL;
+  }
+});
+window.addEventListener('pointerdown', (e) => {
+  if (e.target.closest('button')) return;
+  initAudio();
+  if (state === 'menu'){
+    startGame();
+  } else if (state === 'paused'){
+    ui.pause.classList.add('hidden');
+    state = 'playing';
+    startAmbient();
+  } else if (state === 'playing'){
+    // le dernier doigt posé prend toujours le contrôle
+    grabPointer(e);
+  }
+});
+function releasePointer(e){
+  if (e.pointerId === primaryId){
+    primaryId = null; dragging = false;
+    // doigt levé = arrêt net : on purge l'erreur latérale accumulée
+    if (state === 'playing'){ player.tx = player.x; player.ty = player.y; }
+  }
+}
+window.addEventListener('pointerup', releasePointer);
+window.addEventListener('pointercancel', releasePointer);
+window.addEventListener('blur', () => {
+  primaryId = null; dragging = false;
+  for (const k in keys) keys[k] = false;
+  if (state === 'playing'){ player.tx = player.x; player.ty = player.y; }
+});
+ui.replay.addEventListener('click', (e) => { e.stopPropagation(); startGame(); });
+
+window.addEventListener('keydown', (e) => {
+  keys[e.key.length === 1 ? e.key.toLowerCase() : e.key] = true;
+  if ((e.key === ' ' || e.key === 'Enter') && (state === 'menu' || state === 'over')){
+    initAudio(); startGame();
+  } else if (state === 'paused' && e.key !== 'Tab'){
+    ui.pause.classList.add('hidden');
+    state = 'playing';
+    startAmbient();
+  }
+});
+window.addEventListener('keyup', (e) => {
+  keys[e.key.length === 1 ? e.key.toLowerCase() : e.key] = false;
+});
+
+function clampTarget(){
+  const m = cell + player.rad;
+  player.tx = Math.max(originX + m, Math.min(originX + gw * cell - m, player.tx));
+  player.ty = Math.max(originY + m, Math.min(originY + gh * cell - m, player.ty));
+}
+
+// pause automatique : appel, notification, changement d'app
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden && state === 'playing'){
+    state = 'paused';
+    ui.pause.classList.remove('hidden');
+    stopAmbient();
+    for (const k in keys) keys[k] = false;
+    player.tx = player.x; player.ty = player.y;
+  }
+});
+
+// ---------- Collisions ----------
+// Déplacement axe par axe : le glissement le long des murs reste fluide.
+function moveAxis(dx, dy, axis){
+  player.x += dx; player.y += dy;
+  const r = player.rad;
+  const x0 = Math.max(0, Math.floor((player.x - r - originX) / cell));
+  const x1 = Math.min(gw - 1, Math.floor((player.x + r - originX) / cell));
+  const y0 = Math.max(0, Math.floor((player.y - r - originY) / cell));
+  const y1 = Math.min(gh - 1, Math.floor((player.y + r - originY) / cell));
+  for (let cy = y0; cy <= y1; cy++) for (let cx = x0; cx <= x1; cx++){
+    if (!wall[wIdx(cx, cy)]) continue;
+    const L = originX + cx * cell, T = originY + cy * cell;
+    const nx = Math.max(L, Math.min(L + cell, player.x));
+    const ny = Math.max(T, Math.min(T + cell, player.y));
+    const ddx = player.x - nx, ddy = player.y - ny;
+    const d2 = ddx * ddx + ddy * ddy;
+    if (d2 >= r * r) continue;
+    // séparation MINIMALE le long de la normale de contact :
+    // le perso n'est jamais déplacé de plus que sa pénétration réelle
+    const d = Math.sqrt(d2);
+    if (d > 0.0001){
+      const push = (r - d) + 0.01;
+      player.x += ddx / d * push;
+      player.y += ddy / d * push;
+    } else if (axis === 0){
+      // centre exactement dans le mur (cas extrême) : recul opposé au mouvement
+      player.x = (dx > 0) ? L - r : L + cell + r;
+    } else {
+      player.y = (dy > 0) ? T - r : T + cell + r;
+    }
+  }
+}
+
+// ---------- Mise à jour ----------
+function update(dt){
+  tnow += dt;
+
+  // spores : dérive lente vers le haut, la grotte respire
+  for (const s of spores){
+    s.y -= s.vy * dt;
+    s.ph += dt;
+    s.x += Math.sin(s.ph) * 5 * dt;
+    if (s.y < -4){ s.y = H + 4; s.x = Math.random() * W; }
+  }
+
+  // la structure vit : vagues actives en jeu ET sur l'écran titre
+  if (state === 'playing' || state === 'menu'){
+    if (tele){
+      tele.t -= dt;
+      tele.tickT -= dt;
+      if (tele.tickT <= 0){
+        playTick();
+        tele.tickT = 0.05 + (tele.t / tele.dur) * 0.18 + Math.random() * 0.03;
+      }
+      if (tele.t <= 0) applyWave();
+    } else {
+      waveTimer -= dt;
+      if (waveTimer <= 0){
+        waveTimer = makeWave() ? waveDelay() : 0.3;
+      }
+    }
+    creakT -= dt;
+    if (creakT <= 0){ playCreak(); creakT = 6 + Math.random() * 9; }
+  }
+
+  if (state === 'playing'){
+    elapsed += dt;
+
+    // record battu en direct
+    if (!recordBeaten && best > 0 && score > best){
+      recordBeaten = true;
+      addText(player.x, player.y - 56, 'RECORD !', true);
+      ui.score.classList.add('record');
+      playRecord();
+      buzz(40);
+    }
+
+    // ---- entrées unifiées : une DIRECTION, rien d'autre ----
+    // tactile = joystick flottant (doigt posé → il court, levé → il s'arrête)
+    let ix = 0, iy = 0;
+    if (dragging){
+      const jx = fingX - anchorX, jy = fingY - anchorY;
+      const mag = Math.hypot(jx, jy);
+      if (mag > JOY_DEAD){ ix = jx / mag; iy = jy / mag; }
+    }
+    if (ix === 0 && iy === 0){
+      const kx = ((keys['ArrowRight'] || keys['d']) ? 1 : 0) - ((keys['ArrowLeft'] || keys['q'] || keys['a']) ? 1 : 0);
+      const ky = ((keys['ArrowDown'] || keys['s']) ? 1 : 0) - ((keys['ArrowUp'] || keys['z'] || keys['w']) ? 1 : 0);
+      if (kx !== 0 || ky !== 0){
+        const n = Math.hypot(kx, ky);
+        ix = kx / n; iy = ky / n;
+      }
+    }
+    if (ix !== 0 || iy !== 0){
+      player.tx = player.x + ix * cell * 2;
+      player.ty = player.y + iy * cell * 2;
+    } else {
+      // aucune entrée = aucun mouvement, sans exception
+      player.tx = player.x; player.ty = player.y;
+    }
+    clampTarget();
+
+    let dx = player.tx - player.x, dy = player.ty - player.y;
+    let dist = Math.hypot(dx, dy);
+
+    // déplacement plafonné : les détours coûtent du temps
+    const px = player.x, py = player.y;
+    let dirx = 0, diry = 0;
+    if (dist > 0.5){
+      dirx = dx / dist; diry = dy / dist;
+      const step = Math.min(dist, cell * SPEED_CELLS * dt);
+      moveAxis(dirx * step, 0, 0);
+      moveAxis(0, diry * step, 1);
+    }
+    const mvx = player.x - px, mvy = player.y - py;
+    const mv = Math.hypot(mvx, mvy);
+    // plafonné à 1 : une éjection de collision ne doit jamais aplatir le corps
+    player.moving = Math.min(1, mv / (cell * SPEED_CELLS * dt + 0.0001));
+    if (mv > 0.1){
+      player.walk += mv * 0.3;
+      const inv = 1 / mv;
+      player.fx += (mvx * inv - player.fx) * Math.min(1, dt * 14);
+      player.fy += (mvy * inv - player.fy) * Math.min(1, dt * 14);
+    }
+    player.blinkT -= dt;
+    if (player.blinkT <= -0.12) player.blinkT = 2 + Math.random() * 3;
+
+    // les pas : un son par cycle de trottinement, seulement en mouvement
+    const ph = Math.floor(player.walk * 0.6 / (Math.PI * 2));
+    if (ph !== lastStep){
+      lastStep = ph;
+      if (player.moving > 0.3) playStep();
+    }
+
+    // grondement de proximité : monte quand la pierre se referme PRÈS de toi
+    rumbTick -= dt;
+    if (rumbTick <= 0 && amb && audioCtx){
+      rumbTick = 0.12;
+      let v = 0.0001;
+      if (tele && tele.cClose.length){
+        let md = 1e9;
+        for (const c of tele.cClose){
+          const dd = Math.hypot(originX + (c.x + 0.5) * cell - player.x,
+                                originY + (c.y + 0.5) * cell - player.y);
+          if (dd < md) md = dd;
+        }
+        const prox = Math.max(0, 1 - md / (cell * 5));
+        const prog = 1 - tele.t / tele.dur;
+        v = 0.14 * prox * (0.35 + 0.65 * prog);
+      }
+      amb.rg.gain.setTargetAtTime(Math.max(v, 0.0001), audioCtx.currentTime, 0.1);
+    }
+
+    // creusage : pioche en main, poussée BLOQUÉE et maintenue contre un mur.
+    // L'intention est requise (DIG_HOLD) : un simple frôlement ne casse rien.
+    if (hasPick && (dirx !== 0 || diry !== 0) && player.moving < 0.45){
+      const ax = player.x + dirx * (player.rad + cell * 0.35);
+      const ay = player.y + diry * (player.rad + cell * 0.35);
+      const cx = Math.floor((ax - originX) / cell);
+      const cy = Math.floor((ay - originY) / cell);
+      if (cx >= 0 && cy >= 0 && cx < gw && cy < gh && wall[wIdx(cx, cy)]){
+        if (isBreakable(cx, cy)){
+          digT += dt;
+          if (digT >= DIG_HOLD) breakWall(cx, cy);
+        } else {
+          digT = 0;
+          if (!massifShown){
+            massifShown = true;
+            addText(player.x, player.y - 30, 'trop massif…');
+            playThunk();
+          }
+        }
+      } else digT = 0;
+    } else digT = 0;
+
+    // combo
+    if (comboTimer > 0){
+      comboTimer -= dt;
+      if (comboTimer <= 0) combo = 0;
+    }
+
+    // trésors
+    spawnT -= dt;
+    if (treasures.length < TREASURE_CAP && spawnT <= 0){
+      spawnTreasure();
+      spawnT = SPAWN_DELAY * (0.7 + Math.random() * 0.6);
+    }
+    for (let i = treasures.length - 1; i >= 0; i--){
+      const t = treasures[i];
+      t.life -= dt;
+      t.rot += dt * 2;
+      // la relique scintille en continu : repérable du coin de l'œil
+      if (t.big && !reducedMotion && Math.random() < dt * 4){
+        burst(t.x + (Math.random() - 0.5) * cell * 0.6, t.y - cell * 0.15, 1, 35, COPPER_LIGHT);
+      }
+      if (t.life <= 0){
+        burst(t.x, t.y, reducedMotion ? 2 : 5, 50, '#7A6A4A');
+        treasures.splice(i, 1);
+        continue;
+      }
+      if (Math.hypot(t.x - player.x, t.y - player.y) < player.rad + cell * 0.26){
+        collectTreasure(t);
+        treasures.splice(i, 1);
+      }
+    }
+
+    // la pioche : rare, une seule à la fois (au sol OU en main)
+    if (!hasPick && !pick){
+      pickT -= dt;
+      if (pickT <= 0) spawnPick();
+    }
+    if (hasPick){
+      pickTime -= dt;
+      // alerte : tics métalliques qui s'accélèrent sur la dernière 1,5 s
+      if (pickTime > 0 && pickTime < 1.5){
+        pickTickT -= dt;
+        if (pickTickT <= 0){
+          playPickTick();
+          pickTickT = 0.07 + (pickTime / 1.5) * 0.22;
+        }
+      }
+      if (pickTime <= 0){
+        hasPick = false; digT = 0;
+        addText(player.x, player.y - 30, 'la pioche se brise…');
+        burst(player.x, player.y, reducedMotion ? 3 : 7, 90, '#A7B8BD');
+        playThunk();
+        pickT = PICK_RESPAWN * (0.8 + Math.random() * 0.5);
+      }
+    }
+    if (pick){
+      pick.life -= dt;
+      pick.rot += dt;
+      if (pick.life <= 0){
+        burst(pick.x, pick.y, reducedMotion ? 2 : 4, 50, '#8A9B90');
+        pick = null;
+        pickT = PICK_RESPAWN * (0.8 + Math.random() * 0.5);
+      } else if (Math.hypot(pick.x - player.x, pick.y - player.y) < player.rad + cell * 0.3){
+        hasPick = true; pickTime = PICK_DURATION; pickTickT = 0;
+        massifShown = false; digT = 0;
+        addText(pick.x, pick.y - 12, 'pioche !', true);
+        if (!pickHintShown){
+          pickHintShown = true;
+          addText(player.x, player.y + 30, 'pousse contre un mur fragile');
+        }
+        addRing(pick.x, pick.y);
+        playPickup(); buzz(15);
+        pick = null;
+      }
+    }
+  }
+
+  if (state === 'dying'){
+    dyingTimer += dt;
+    if (dyingTimer > 1.2) endGame();
+  }
+
+  // particules
+  for (let i = particles.length - 1; i >= 0; i--){
+    const p = particles[i];
+    p.x += p.vx * dt; p.y += p.vy * dt;
+    p.vy += 140 * dt;
+    p.life -= p.decay * dt;
+    if (p.life <= 0) particles.splice(i, 1);
+  }
+  // anneaux
+  for (let i = rings.length - 1; i >= 0; i--){
+    const r = rings[i];
+    r.r += 210 * dt; r.life -= 1.9 * dt;
+    if (r.life <= 0) rings.splice(i, 1);
+  }
+  // textes flottants
+  for (let i = texts.length - 1; i >= 0; i--){
+    const t = texts[i];
+    t.y -= 42 * dt; t.life -= 0.85 * dt;
+    if (t.life <= 0) texts.splice(i, 1);
+  }
+
+  shake = Math.max(0, shake - dt * 24);
+  flash = Math.max(0, flash - dt * 1.6);
+
+  // HUD
+  const s = Math.floor(score);
+  if (s !== displayedScore){ displayedScore = s; ui.score.textContent = s; }
+  if (combo >= 2 && comboTimer > 0 && state === 'playing'){
+    ui.combo.textContent = '×' + combo;
+    ui.combo.classList.add('on');
+  } else {
+    ui.combo.classList.remove('on');
+  }
+}
+
+// ---------- Rendu ----------
+const STONES = ['#33423A', '#2E3C35', '#37473E'];
+
+function drawPickShape(x, y, s, angle, alpha){
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(angle);
+  ctx.globalAlpha = alpha;
+  ctx.lineCap = 'round';
+  // manche en bois
+  ctx.strokeStyle = '#8A6A48';
+  ctx.lineWidth = Math.max(1.6, s * 0.16);
+  ctx.beginPath();
+  ctx.moveTo(-s * 0.5, s * 0.5);
+  ctx.lineTo(s * 0.32, -s * 0.32);
+  ctx.stroke();
+  // tête en fer
+  ctx.strokeStyle = '#A7B8BD';
+  ctx.lineWidth = Math.max(2, s * 0.2);
+  ctx.beginPath();
+  ctx.arc(s * 0.32, -s * 0.32, s * 0.42, Math.PI * 0.75 - 1.25, Math.PI * 0.75 + 1.25);
+  ctx.stroke();
+  ctx.restore();
+  ctx.globalAlpha = 1;
+}
+
+function draw(){
+  // fond : terre profonde
+  const bg = ctx.createRadialGradient(W / 2, H * 0.42, 0, W / 2, H * 0.42, Math.max(W, H) * 0.85);
+  bg.addColorStop(0, '#22302A');
+  bg.addColorStop(1, '#0F1712');
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.save();
+  if (shake > 0){
+    ctx.translate((Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake);
+  }
+
+  // spores en arrière-plan
+  for (const s of spores){
+    ctx.fillStyle = 'rgba(140,170,140,' + s.a.toFixed(3) + ')';
+    ctx.fillRect(s.x, s.y, s.r, s.r);
+  }
+
+  // la pierre vivante : chaque mur respire avec un déphasage spatial
+  if (wall){
+    for (let cy = 0; cy < gh; cy++){
+      const ry = originY + cy * cell;
+      for (let cx = 0; cx < gw; cx++){
+        if (!wall[wIdx(cx, cy)]) continue;
+        const rx = originX + cx * cell;
+        const h = hash01(cx, cy);
+        const br = reducedMotion ? 0.5 : Math.sin(tnow * 0.9 + (cx + cy) * 0.55 + h * 6.28) * 0.5 + 0.5;
+        ctx.fillStyle = STONES[Math.floor(h * 3) % 3];
+        ctx.fillRect(rx + 0.5, ry + 0.5, cell - 1, cell - 1);
+        // mousse sur l'arête éclairée
+        if (cy > 0 && !wall[wIdx(cx, cy - 1)]){
+          ctx.fillStyle = 'rgba(94,140,97,' + (0.16 + 0.16 * br).toFixed(3) + ')';
+          ctx.fillRect(rx + 2, ry + 1, cell - 4, 2);
+        }
+        // ombre portée sous la pierre
+        if (cy < gh - 1 && !wall[wIdx(cx, cy + 1)]){
+          ctx.fillStyle = 'rgba(0,0,0,0.28)';
+          ctx.fillRect(rx + 1, ry + cell - 2.5, cell - 2, 2);
+        }
+      }
+    }
+  }
+
+  // télégraphes
+  if (tele){
+    const p = 1 - tele.t / tele.dur;
+    const g = p * p;   // la fermeture accélère à la fin
+    // passages qui vont s'OUVRIR : lueur de mousse sur le mur condamné
+    ctx.lineWidth = 1.4;
+    for (const c of tele.cOpen){
+      const rx = originX + c.x * cell, ry = originY + c.y * cell;
+      ctx.strokeStyle = 'rgba(94,140,97,' + (0.25 + 0.2 * Math.sin(tnow * 6)).toFixed(3) + ')';
+      ctx.strokeRect(rx + 1.5, ry + 1.5, cell - 3, cell - 3);
+    }
+    // passages qui vont se FERMER : argile, tremblement, pierre qui pousse
+    for (const c of tele.cClose){
+      const jx = reducedMotion ? 0 : (Math.random() - 0.5) * 2.4 * p;
+      const jy = reducedMotion ? 0 : (Math.random() - 0.5) * 2.4 * p;
+      const rx = originX + c.x * cell + jx, ry = originY + c.y * cell + jy;
+      ctx.strokeStyle = 'rgba(181,83,47,' + (0.5 + 0.3 * Math.sin(tnow * 10)).toFixed(3) + ')';
+      ctx.strokeRect(rx + 1.5, ry + 1.5, cell - 3, cell - 3);
+      const m = (1 - g) * cell * 0.5;
+      ctx.fillStyle = 'rgba(51,66,58,' + (0.85 * g).toFixed(3) + ')';
+      ctx.fillRect(rx + m, ry + m, cell - 2 * m, cell - 2 * m);
+    }
+  }
+
+  // trésors : éclats de cuivre (et reliques)
+  for (const t of treasures){
+    let a = 1;
+    if (t.life < 1.2) a = (Math.sin(tnow * 18) > 0) ? 1 : 0.25;   // clignote avant de mourir
+    const s = cell * (t.big ? 0.44 : 0.30) * (0.92 + 0.08 * Math.sin(t.rot * 2));
+    // lueur
+    const gr = s * (t.big ? 3.2 : 2.6);
+    const glow = ctx.createRadialGradient(t.x, t.y, 0, t.x, t.y, gr);
+    glow.addColorStop(0, 'rgba(232,178,125,' + ((t.big ? 0.55 : 0.4) * a).toFixed(3) + ')');
+    glow.addColorStop(1, 'rgba(201,123,61,0)');
+    ctx.fillStyle = glow;
+    ctx.beginPath(); ctx.arc(t.x, t.y, gr, 0, Math.PI * 2); ctx.fill();
+    // losange
+    ctx.save();
+    ctx.translate(t.x, t.y);
+    ctx.rotate(Math.sin(t.rot) * 0.35);
+    ctx.globalAlpha = a;
+    ctx.beginPath();
+    ctx.moveTo(0, -s); ctx.lineTo(s * 0.62, 0); ctx.lineTo(0, s); ctx.lineTo(-s * 0.62, 0);
+    ctx.closePath();
+    const grad = ctx.createLinearGradient(-s, -s, s, s);
+    grad.addColorStop(0, COPPER_LIGHT);
+    grad.addColorStop(1, COPPER);
+    ctx.fillStyle = grad;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,236,205,0.7)';
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(0, -s * 0.55); ctx.lineTo(s * 0.3, 0); ctx.stroke();
+    // facette interne de la relique
+    if (t.big){
+      ctx.strokeStyle = 'rgba(240,234,217,0.55)';
+      ctx.beginPath();
+      ctx.moveTo(0, -s * 0.45); ctx.lineTo(s * 0.28, 0);
+      ctx.lineTo(0, s * 0.45); ctx.lineTo(-s * 0.28, 0);
+      ctx.closePath();
+      ctx.stroke();
+    }
+    ctx.restore();
+    ctx.globalAlpha = 1;
+  }
+
+  // anneaux de cuivre
+  for (const r of rings){
+    ctx.beginPath();
+    ctx.arc(r.x, r.y, r.r, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(201,123,61,' + (r.life * 0.6).toFixed(3) + ')';
+    ctx.lineWidth = 1.6;
+    ctx.stroke();
+  }
+
+  // la pioche au sol
+  if (pick){
+    let a = 1;
+    if (pick.life < 1.5) a = (Math.sin(tnow * 16) > 0) ? 1 : 0.3;
+    const bp = Math.sin(tnow * 3) * 2;
+    const glow = ctx.createRadialGradient(pick.x, pick.y + bp, 0, pick.x, pick.y + bp, cell * 0.9);
+    glow.addColorStop(0, 'rgba(240,234,217,' + (0.22 * a).toFixed(3) + ')');
+    glow.addColorStop(1, 'rgba(240,234,217,0)');
+    ctx.fillStyle = glow;
+    ctx.beginPath(); ctx.arc(pick.x, pick.y + bp, cell * 0.9, 0, Math.PI * 2); ctx.fill();
+    drawPickShape(pick.x, pick.y + bp, cell * 0.34, Math.sin(pick.rot) * 0.3, a);
+  }
+
+  // l'explorateur
+  if (state === 'playing' || state === 'paused'){
+    const r = player.rad;
+    const ang = Math.atan2(player.fy, player.fx);
+    // ombre
+    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+    ctx.beginPath();
+    ctx.ellipse(player.x, player.y + r * 0.85, r * 0.8, r * 0.32, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // pieds (trottinement)
+    if (player.moving > 0.1){
+      const sw = Math.sin(player.walk * 0.6) * r * 0.45;
+      const pxp = -Math.sin(ang), pyp = Math.cos(ang);
+      ctx.fillStyle = '#D9CFB4';
+      ctx.beginPath();
+      ctx.arc(player.x + pxp * r * 0.5 - Math.cos(ang) * sw, player.y + pyp * r * 0.5 - Math.sin(ang) * sw + r * 0.6, r * 0.22, 0, Math.PI * 2);
+      ctx.arc(player.x - pxp * r * 0.5 + Math.cos(ang) * sw, player.y - pyp * r * 0.5 + Math.sin(ang) * sw + r * 0.6, r * 0.22, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // corps (léger étirement dans le sens du mouvement)
+    const bob = Math.sin(player.walk * 0.6) * r * 0.06 * player.moving;
+    // la pioche sur le dos (derrière le corps)
+    if (hasPick){
+      drawPickShape(player.x - player.fx * r * 0.9, player.y - player.fy * r * 0.9 + bob,
+                    r * 1.0, ang + 2.4, 1);
+    }
+    ctx.save();
+    ctx.translate(player.x, player.y + bob);
+    ctx.rotate(ang);
+    ctx.scale(1 + 0.08 * player.moving, 1 - 0.06 * player.moving);
+    const core = ctx.createRadialGradient(-r * 0.25, -r * 0.3, 1, 0, 0, r);
+    core.addColorStop(0, '#FFFBEE');
+    core.addColorStop(0.6, IVORY);
+    core.addColorStop(1, '#D8CDB2');
+    ctx.fillStyle = core;
+    ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill();
+    // yeux tournés vers la direction
+    const blink = player.blinkT < 0 ? 0.15 : 1;
+    ctx.fillStyle = '#1A241E';
+    ctx.beginPath();
+    ctx.ellipse(r * 0.38, -r * 0.26, r * 0.13, r * 0.13 * blink, 0, 0, Math.PI * 2);
+    ctx.ellipse(r * 0.38,  r * 0.26, r * 0.13, r * 0.13 * blink, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+    // anneau acier : arc qui rétrécit = temps de pioche restant
+    if (hasPick){
+      const frac = Math.max(0, pickTime / PICK_DURATION);
+      let ra = 0.4 + 0.15 * Math.sin(tnow * 4);
+      if (pickTime < 1.5) ra = (Math.sin(tnow * 14) > 0) ? 0.6 : 0.12;   // ça va casser
+      ctx.beginPath();
+      ctx.arc(player.x, player.y, r + 5.5, -Math.PI / 2, -Math.PI / 2 + frac * Math.PI * 2);
+      ctx.strokeStyle = 'rgba(167,184,189,' + ra.toFixed(3) + ')';
+      ctx.lineWidth = 1.6;
+      ctx.stroke();
+    }
+  }
+
+  // particules
+  for (const p of particles){
+    ctx.fillStyle = p.color;
+    ctx.globalAlpha = Math.max(0, p.life);
+    ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  // textes flottants
+  ctx.textAlign = 'center';
+  for (const t of texts){
+    ctx.font = t.big
+      ? "600 24px 'Cinzel', Georgia, serif"
+      : "500 18px 'Alegreya', Georgia, serif";
+    ctx.fillStyle = t.big
+      ? 'rgba(232,178,125,' + Math.max(0, t.life).toFixed(3) + ')'
+      : 'rgba(240,234,217,' + Math.max(0, t.life).toFixed(3) + ')';
+    ctx.fillText(t.str, t.x, t.y);
+  }
+
+  ctx.restore();
+
+  // zone de contrôle basse : séparateur + médaillon de joystick au repos
+  if (state === 'playing' || state === 'paused'){
+    const zy = H - ctrlH();
+    ctx.fillStyle = 'rgba(94,140,97,0.15)';
+    ctx.fillRect(0, zy, W, 1);
+    if (!dragging){
+      const bx = W / 2, by = zy + ctrlH() * 0.52;
+      const br2 = 0.10 + 0.06 * (Math.sin(tnow * 2) * 0.5 + 0.5);
+      ctx.beginPath();
+      ctx.arc(bx, by, JOY_FULL, 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(240,234,217,' + br2.toFixed(3) + ')';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(bx, by, 6, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(240,234,217,0.18)';
+      ctx.fill();
+    }
+  }
+
+  // guide du joystick flottant (espace écran, discret)
+  if (dragging && state === 'playing'){
+    const jx = fingX - anchorX, jy = fingY - anchorY;
+    const mag = Math.hypot(jx, jy);
+    ctx.beginPath();
+    ctx.arc(anchorX, anchorY, JOY_FULL, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(240,234,217,0.14)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    if (mag > JOY_DEAD){
+      const k = Math.min(mag, JOY_FULL);
+      ctx.beginPath();
+      ctx.arc(anchorX + jx / mag * k, anchorY + jy / mag * k, 6, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(240,234,217,0.28)';
+      ctx.fill();
+    }
+  }
+
+  // flash (mort)
+  if (flash > 0){
+    ctx.fillStyle = 'rgba(181,83,47,' + (flash * 0.3).toFixed(3) + ')';
+    ctx.fillRect(0, 0, W, H);
+  }
+}
+
+// ---------- Redimensionnement ----------
+function resize(){
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  W = window.innerWidth;
+  H = window.innerHeight;
+  canvas.width  = Math.floor(W * DPR);
+  canvas.height = Math.floor(H * DPR);
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  if (gw){
+    const oc = cell, ox = originX, oy = originY;
+    computeLayout();
+    if (oc){
+      const f = cell / oc;
+      const mx = (v) => originX + (v - ox) * f;
+      const my = (v) => originY + (v - oy) * f;
+      player.x = mx(player.x); player.y = my(player.y);
+      player.tx = mx(player.tx); player.ty = my(player.ty);
+      for (const t of treasures){ t.x = mx(t.x); t.y = my(t.y); }
+      if (pick){ pick.x = mx(pick.x); pick.y = my(pick.y); }
+    }
+  }
+  makeSpores();
+}
+window.addEventListener('resize', resize);
+
+// ---------- Boucle ----------
+let last = performance.now();
+function loop(now){
+  const dt = Math.min(0.033, (now - last) / 1000);
+  last = now;
+  update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+
+// ---------- Lancement ----------
+(async function init(){
+  resize();
+  newMaze();          // le labyrinthe vit déjà derrière l'écran titre
+  makeSpores();
+  best = await loadBest();
+  ui.menuBest.textContent = best > 0 ? 'Record · ' + best : '';
+  requestAnimationFrame(loop);
+})();
+
+// PWA : service worker pour le mode hors-ligne (ignoré hors déploiement)
+if ('serviceWorker' in navigator && location.protocol === 'https:'){
+  navigator.serviceWorker.register('sw.js').catch(() => {});
+}
+</script>
+</body>
+</html>
