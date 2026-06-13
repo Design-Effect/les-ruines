@@ -148,6 +148,19 @@
     outline:none;
   }
 
+  #share{
+    margin-top:16px;padding:11px 30px;
+    font-family:'Alegreya',Georgia,serif;
+    font-size:15.5px;font-style:italic;letter-spacing:.06em;
+    color:rgba(240,234,217,.62);background:transparent;cursor:pointer;
+    border:1px solid rgba(167,184,189,.3);border-radius:2px;
+    transition:color .25s, border-color .25s;
+  }
+  #share:hover,#share:focus-visible{
+    color:var(--ivory);border-color:rgba(167,184,189,.6);outline:none;
+  }
+  #share.done{color:var(--moss);border-color:rgba(94,140,97,.5)}
+
   @media (max-height:600px){
     h1{font-size:40px}
     #finalScore{font-size:56px}
@@ -190,6 +203,7 @@
   <div id="newBest">◆ Nouveau record ◆</div>
   <div id="overBest"></div>
   <button id="replay">Recreuser</button>
+  <button id="share">Partager mon score</button>
 </div>
 
 <!-- Écran de pause -->
@@ -228,6 +242,8 @@ const SPEED_CELLS   = 5.6;   // vitesse max du perso (cases/s)
 const RAD_CELLS     = 0.30;  // rayon du perso (× case)
 const JOY_DEAD      = 9;     // zone morte du joystick flottant (px)
 const JOY_FULL      = 30;    // rayon de dérive de l'ancre (px)
+// URL du jeu pour le partage — À METTRE À JOUR si le dépôt est renommé
+const GAME_URL      = 'https://design-effect.github.io/les-ruines/';
 const PICK_FIRST    = 10;    // première pioche (s)
 const PICK_RESPAWN  = 16;    // délai moyen entre pioches (s), après la fin de la fenêtre
 const PICK_LIFE     = 9;     // durée de la pioche au sol (s)
@@ -254,6 +270,7 @@ const ui = {
   newBest:    document.getElementById('newBest'),
   overBest:   document.getElementById('overBest'),
   replay:     document.getElementById('replay'),
+  share:      document.getElementById('share'),
   pause:      document.getElementById('pause'),
   mute:       document.getElementById('mute'),
 };
@@ -972,6 +989,33 @@ window.addEventListener('blur', () => {
   if (state === 'playing'){ player.tx = player.x; player.ty = player.y; }
 });
 ui.replay.addEventListener('click', (e) => { e.stopPropagation(); startGame(); });
+ui.share.addEventListener('click', async (e) => {
+  e.stopPropagation();
+  const sc = Math.floor(score);
+  const text = 'J\'ai déterré ' + sc + ' points dans Les Ruines. Tu fais mieux ?';
+  const confirm = (msg) => {
+    ui.share.textContent = msg;
+    ui.share.classList.add('done');
+    setTimeout(() => {
+      ui.share.textContent = 'Partager mon score';
+      ui.share.classList.remove('done');
+    }, 2200);
+  };
+  // Web Share API : feuille de partage native (iOS / Android)
+  if (navigator.share){
+    try{
+      await navigator.share({ title: 'Les Ruines', text, url: GAME_URL });
+    }catch(err){ /* annulé par l'utilisateur : on ne fait rien */ }
+    return;
+  }
+  // repli desktop : copie dans le presse-papiers
+  try{
+    await navigator.clipboard.writeText(text + ' ' + GAME_URL);
+    confirm('Copié dans le presse-papiers ✓');
+  }catch(err){
+    confirm(GAME_URL);
+  }
+});
 
 window.addEventListener('keydown', (e) => {
   keys[e.key.length === 1 ? e.key.toLowerCase() : e.key] = true;

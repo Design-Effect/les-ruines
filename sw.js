@@ -1,5 +1,5 @@
 // Les Ruines — service worker : jeu jouable hors-ligne
-const CACHE = 'ruines-v1';
+const CACHE = 'ruines-v2';
 const CORE = ['./', './index.html', './manifest.json',
               './icon-192.png', './icon-512.png', './apple-touch-icon.png'];
 
