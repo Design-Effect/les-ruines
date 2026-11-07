@@ -3,14 +3,14 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-<title>Les Ruines</title>
+<title>Les Vestiges Oubliés</title>
 <meta name="theme-color" content="#131B15">
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Les Ruines">
+<meta name="apple-mobile-web-app-title" content="Vestiges Oubliés">
 <style>
 @font-face{font-family:'Alegreya';font-style:italic;font-weight:400;font-display:swap;src:url(polices/alegreya-400i.woff2) format('woff2');unicode-range:U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD}
 @font-face{font-family:'Alegreya';font-style:normal;font-weight:500;font-display:swap;src:url(polices/alegreya-500.woff2) format('woff2');unicode-range:U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD}
@@ -139,10 +139,11 @@
 
   h1{
     font-family:'Cinzel',Georgia,serif;
-    font-size:54px;font-weight:600;letter-spacing:.3em;text-indent:.3em;
+    font-size:38px;font-weight:600;letter-spacing:.2em;text-indent:.2em;line-height:1.15;
     color:var(--ivory);
     text-shadow:0 3px 0 rgba(0,0,0,.35), 0 0 30px rgba(94,140,97,.25);
   }
+  h1 small{display:block;font-size:17px;letter-spacing:.5em;text-indent:.5em;color:var(--copper-light);margin-bottom:6px;font-weight:500}
   .rule{
     width:130px;height:1px;margin:16px auto 18px;
     background:linear-gradient(90deg, transparent, var(--copper) 30%, var(--copper) 70%, transparent);
@@ -231,7 +232,7 @@
   #share.done{color:var(--moss);border-color:rgba(94,140,97,.5)}
 
   @media (max-height:600px){
-    h1{font-size:40px}
+    h1{font-size:30px}
     #finalScore{font-size:56px}
     .hint{margin-top:24px}
   }
@@ -264,10 +265,10 @@
   <svg class="crack" viewBox="0 0 190 22" fill="none" aria-hidden="true">
     <path d="M6 14 L34 9 L58 15 L92 6 L121 14 L152 8 L184 12" stroke="#C97B3D" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
   </svg>
-  <h1>LES RUINES</h1>
+  <h1><small>LES</small>VESTIGES<br>OUBLIÉS</h1>
   <div class="rule"></div>
-  <p class="tagline">La pierre est vivante.<br>Ses trésors ne t&rsquo;attendent pas.</p>
-  <p class="ctrl">Pose le pouce sur le médaillon en bas et incline : il court.<br>Lâche, il s&rsquo;arrête. Fuis les passages qui se referment.</p>
+  <p class="tagline">La pierre est vivante.<br>Ses secrets se méritent.</p>
+  <p class="ctrl">Pose le pouce sur le médaillon en bas et incline : il court. Lâche, il s&rsquo;arrête.<br>Observe, réfléchis, ouvre les portes scellées.</p>
   <div class="hint">Touche l&rsquo;écran pour descendre</div>
   <div class="best" id="menuBest"></div>
 </div>
@@ -286,7 +287,7 @@
 <!-- Écran de pause -->
 <div id="boons" class="screen hidden">
   <h2>Choisis ton bonus</h2>
-  <div class="boonsub">Elle te suit jusqu&rsquo;à la fin de la partie</div>
+  <div class="boonsub">Il te suit jusqu&rsquo;à la fin de la partie</div>
   <div id="boonCards"></div>
 </div>
 
@@ -300,7 +301,7 @@
 'use strict';
 
 /* ============================================================
-   LES RUINES : le labyrinthe vivant
+   LES VESTIGES OUBLIÉS : le labyrinthe vivant
    Une structure de pierre qui respire, se reconfigure par
    vagues, et un explorateur qui déterre ses éclats de cuivre.
    Palette : pierre #33423A · mousse #5E8C61 · cuivre #C97B3D
@@ -2033,7 +2034,7 @@ ui.share.addEventListener('click', async (e) => {
   e.stopPropagation();
   playUi();
   const sc = Math.floor(score);
-  const text = 'J\'ai déterré ' + sc + ' points dans Les Ruines. Tu fais mieux ?';
+  const text = 'J\'ai déterré ' + sc + ' points dans Les Vestiges Oubliés. Tu fais mieux ?';
   const confirm = (msg) => {
     ui.share.textContent = msg;
     ui.share.classList.add('done');
@@ -2045,7 +2046,7 @@ ui.share.addEventListener('click', async (e) => {
   // Web Share API : feuille de partage native (iOS / Android)
   if (navigator.share){
     try{
-      await navigator.share({ title: 'Les Ruines', text, url: GAME_URL });
+      await navigator.share({ title: 'Les Vestiges Oubliés', text, url: GAME_URL });
     }catch(err){ /* annulé par l'utilisateur : on ne fait rien */ }
     return;
   }
