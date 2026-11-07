@@ -289,10 +289,10 @@ const SPAWN_DELAY   = 1.3;   // délai moyen entre apparitions (s)
 const BIG_CHANCE    = 0.14;  // proba qu'un trésor soit une relique (1 max à la fois)
 const BIG_MULT      = 5;     // valeur de la relique (× trésor normal, × combo)
 const BIG_LIFE      = 4.5;   // durée de vie de la relique (s), un sprint, pas une cueillette
-const WAVE_START    = 4.0;   // intervalle entre vagues au départ (s)
-const WAVE_MIN      = 1.6;   // intervalle plancher (s)
-const TELE_START    = 1.5;   // durée du télégraphe au départ (s)
-const TELE_MIN      = 0.8;   // télégraphe plancher (s)
+const WAVE_START    = 4.6;   // intervalle entre vagues au départ (s)
+const WAVE_MIN      = 2.8;   // intervalle plancher (s)
+const TELE_START    = 1.7;   // durée du télégraphe au départ (s)
+const TELE_MIN      = 1.1;   // télégraphe plancher (s)
 const REGION        = 0.55;  // étendue d'une vague (0.55² ≈ 30 % des salles)
 const BRAID         = 0.14;  // proportion de boucles (anti-impasses)
 const LOOP_EXTRA    = 0.14;  // boucles rajoutées à chaque vague
@@ -325,11 +325,11 @@ const JUMP_DUR      = 0.4;   // durée d'un bond (s)
 // les quatre étages : chacun son format, sa teinte, ses ennemis. Après le quatrième, on boucle en montant d'un cran.
 const STAGES = [
   { nom: 'Les Galeries', biome: 0, cell: 1.00, mask: 'rect',    braid: 0.14, quota: 8,  waveMul: 1.00, scarab: 0, garde: 0 },
-  { nom: 'La Caverne',   biome: 1, cell: 0.82, mask: 'losange', braid: 0.45, quota: 9,  waveMul: 0.95, scarab: 2, garde: 0 },
-  { nom: 'Le Puits',     biome: 2, cell: 0.90, mask: 'croix',   braid: 0.03, quota: 10, waveMul: 0.90, scarab: 2, garde: 1, fixed: 0.3 },
-  { nom: 'La Cendre',    biome: 3, cell: 1.15, mask: 'rect',    braid: 0.10, quota: 10, waveMul: 0.85, scarab: 1, garde: 2 },
+  { nom: 'La Caverne',   biome: 1, cell: 0.82, mask: 'losange', braid: 0.45, quota: 9,  waveMul: 1.00, scarab: 2, garde: 0 },
+  { nom: 'Le Puits',     biome: 2, cell: 0.90, mask: 'croix',   braid: 0.03, quota: 10, waveMul: 0.95, scarab: 2, garde: 1, fixed: 0.3 },
+  { nom: 'La Cendre',    biome: 3, cell: 1.15, mask: 'rect',    braid: 0.10, quota: 10, waveMul: 0.95, scarab: 1, garde: 2 },
 ];
-const REGION_MAX    = 0.65;  // étendue maximale d'une vague (profondeurs avancées)
+const REGION_MAX    = 0.6;   // étendue maximale d'une vague (profondeurs avancées)
 const NEAR_PTS      = 10;    // « de justesse » : points (× combo)
 const BONUS_FIRST   = 14;    // premier bonus (s)
 const BONUS_RESPAWN = 13;    // délai moyen entre bonus (s), après la prise ou la disparition
@@ -394,6 +394,7 @@ let creakT = 5;              // craquements aléatoires d'ambiance
 let spawnT = 1;
 let stageIdx = 0;            // l'étage : 0 = Les Galeries
 let stageGot = 0;            // éclats ramassés dans cet étage
+let stageT = 0;              // temps passé dans cet étage (s) : il pilote le rythme des vagues
 let exitP = null;            // le passage vers l'étage suivant (quand le quota est atteint)
 let transT = 0, transSwitched = false;
 let enemies = [], grace = 0, chaseField = null, chaseT = 0;
@@ -545,15 +546,15 @@ function buildWalls(){
 // + boucles. L'union-find garantit que TOUT reste connecté après la vague.
 function teleDur(){
   if (state !== 'playing') return 1.6;
-  return Math.max(TELE_MIN, TELE_START - elapsed * 0.005 - collected * 0.012);
+  return Math.max(TELE_MIN, TELE_START - stageT * 0.004 - stageGot * 0.012);
 }
 function waveDelay(){
   if (state !== 'playing') return 4.5;
-  return Math.max(WAVE_MIN, WAVE_START - elapsed * 0.022 - collected * 0.045) * S().waveMul;
+  return Math.max(WAVE_MIN, WAVE_START - stageT * 0.012 - stageGot * 0.05) * S().waveMul * Math.pow(0.97, tier());
 }
 
 function makeWave(){
-  const reg = Math.min(REGION_MAX, REGION + stageIdx * 0.025);
+  const reg = Math.min(REGION_MAX, REGION + stageIdx * 0.015);
   const rw = Math.max(2, Math.round(Rx * reg));
   const rh = Math.max(2, Math.round(Ry * reg));
   const x0 = Math.floor(Math.random() * (Rx - rw + 1));
@@ -806,7 +807,7 @@ function nextStage(){
   pick = null; hasPick = false; pickT = PICK_FIRST; pickTime = 0; digT = 0; swing = null;
   bonus = null; bonusT = BONUS_FIRST * 0.6; bonusBag = []; lastBonus = null;
   for (const k in fx){ fx[k] = 0; fxTickT[k] = 0; }
-  exitP = null; stageGot = 0; jump = null; bondN = 0; helmet = true; invuln = 0;
+  exitP = null; stageGot = 0; stageT = 0; jump = null; bondN = 0; helmet = true; invuln = 0;
   combo = 0; comboTimer = 0;
   const ci = Math.floor(Rx / 2), cj = Math.floor(Ry / 2);
   player.x = player.tx = originX + (2*ci + 1.5) * cell;
@@ -1424,7 +1425,7 @@ function startGame(){
   collected = 0; elapsed = 0; shake = 0; flash = 0;
   recordBeaten = false;
   swing = null; attackCd = 0;
-  stageIdx = 0; stageGot = 0; exitP = null; jump = null; bondN = 0; grace = 0; deathCause = 'pierre'; lastGoal = ''; helmet = true; invuln = 0;
+  stageIdx = 0; stageGot = 0; stageT = 0; exitP = null; jump = null; bondN = 0; grace = 0; deathCause = 'pierre'; lastGoal = ''; helmet = true; invuln = 0;
   stat = { near: 0, bestCombo: 0, relics: 0, bonus: 0, squashed: 0 };
   bonus = null; bonusT = BONUS_FIRST; bonusBag = []; lastBonus = null;
   for (const k in fx){ fx[k] = 0; fxTickT[k] = 0; }
@@ -1698,7 +1699,7 @@ function update(dt){
   }
 
   if (state === 'playing'){
-    elapsed += dt;
+    elapsed += dt; stageT += dt;
 
     // record battu en direct
     if (!recordBeaten && best > 0 && score > best){
