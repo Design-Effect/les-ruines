@@ -3047,102 +3047,142 @@ function jacketGrad(S, x0, x1){
   g.addColorStop(0, '#FBF6E8'); g.addColorStop(0.55, '#EDE5CF'); g.addColorStop(1, '#BDB093');
   return g;
 }
-function drawHelmetTop(S, cx, cy, side){
-  // le casque : dôme de cuivre, bord, arête ; la lampe est dessinée par l'appelant
-  ctx.beginPath(); ctx.ellipse(cx, cy, S * 0.27, S * 0.25, 0, Math.PI, 0);
-  ctx.closePath();
-  const g = ctx.createLinearGradient(cx - S * 0.27, cy - S * 0.25, cx + S * 0.27, cy);
-  g.addColorStop(0, '#F5BC86'); g.addColorStop(0.5, COPPER); g.addColorStop(1, '#8E4A22');
-  ctx.fillStyle = g; ctx.fill(); ctx.strokeStyle = 'rgba(50,24,8,0.75)'; ctx.lineWidth = 1; ctx.stroke();
-}
-function drawFrontBack(S, ph, mv, back){
-  const sw = ph * mv;
-  // jambes : l'une se lève quand l'autre pose le pied
-  for (const k of [-1, 1]){
-    const lift = Math.max(0, k * ph) * S * 0.1 * mv;
-    rrect(k * S * 0.12 - S * 0.08, -S * 0.3 - lift, S * 0.16, S * 0.3, S * 0.05, TROUSER, OUTL);
-    rrect(k * S * 0.12 - S * 0.11, -S * 0.07 - lift, S * 0.22, S * 0.08, S * 0.04, BOOT, OUTL);
+// Le mineur (lot 10) : refait d'après la planche d'Emma (07/11) : tête et casque grands, foulée longue, corps penché, foulard qui flotte.
+// Aucun visage : sous le bord du casque, UN creux d'ombre uniforme ; le foulard monte jusqu'à lui. Aucune peau visible.
+let LW = 1.2;
+const SHIRT = '#F2E8CF', BRIM = '#8A4A22', MITT = '#8A5A3A', SHADOW = '#1E1410';
+function strokeOut(){ ctx.strokeStyle = OUTL; ctx.lineWidth = LW; ctx.lineJoin = 'round'; ctx.stroke(); }
+// le foulard qui flotte : un ruban ondulé, plus long quand on court
+function drawScarfTail(S, x0, y0, len, dir){
+  const n = 6, th = S * 0.06, up = [], dn = [];
+  for (let k = 0; k <= n; k++){
+    const t = k / n, x = x0 + dir * len * S * t, wv = Math.sin(tnow * 11 - t * 5) * S * 0.07 * (0.3 + t) * (0.4 + player.moving);
+    const y = y0 + wv - t * S * 0.03, w = th * (1 - t * 0.35);
+    up.push([x, y - w]); dn.push([x, y + w]);
   }
-  // le sac dépasse sur les côtés (face) ou couvre le dos (dos)
-  if (!back) rrect(-S * 0.3, -S * 0.6, S * 0.6, S * 0.3, S * 0.07, LEATHER, OUTL);
-  // bras
+  ctx.beginPath(); ctx.moveTo(up[0][0], up[0][1]);
+  for (const q of up) ctx.lineTo(q[0], q[1]);
+  for (let k = dn.length - 1; k >= 0; k--) ctx.lineTo(dn[k][0], dn[k][1]);
+  ctx.closePath(); ctx.fillStyle = SCARF; ctx.fill(); strokeOut();
+}
+// le casque : dôme de cuivre, bande, bord, arête ; la lampe est posée par l'appelant. Sans casque : une calotte de cheveux sombres.
+function drawHelmet(S, cx, cy, wide, lampX){
+  if (!helmet){
+    ctx.beginPath(); ctx.ellipse(cx, cy + S * 0.02, wide * 0.7, S * 0.26, 0, Math.PI, 0); ctx.closePath();
+    ctx.fillStyle = '#3B2A1E'; ctx.fill(); strokeOut();
+    return;
+  }
+  ctx.beginPath(); ctx.ellipse(cx, cy, wide * 0.72, S * 0.33, 0, Math.PI, 0); ctx.closePath();
+  const g = ctx.createLinearGradient(cx - wide * 0.8, cy - S * 0.34, cx + wide * 0.8, cy);
+  g.addColorStop(0, '#F5BC86'); g.addColorStop(0.5, COPPER); g.addColorStop(1, '#8E4A22');
+  ctx.fillStyle = g; ctx.fill(); strokeOut();
+  ctx.strokeStyle = 'rgba(255,226,186,0.6)'; ctx.lineWidth = Math.max(1, S * 0.04);                 // l'arête
+  ctx.beginPath(); ctx.moveTo(cx + (lampX ? lampX * 0.2 : 0), cy - S * 0.34); ctx.lineTo(cx + (lampX ? lampX * 0.2 : 0), cy - S * 0.08); ctx.stroke();
+  rrect(cx - wide, cy - S * 0.07, wide * 2, S * 0.1, S * 0.05, BRIM, OUTL);                       // le bord
+  ctx.fillStyle = 'rgba(255,255,255,0.18)'; ctx.fillRect(cx - wide * 0.8, cy - S * 0.06, wide * 1.6, S * 0.025);
+}
+function drawLamp(x, y, r){
+  ctx.beginPath(); ctx.arc(x, y, r * 1.5, 0, Math.PI * 2); ctx.fillStyle = 'rgba(255,240,200,0.28)'; ctx.fill();
+  ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fillStyle = '#FFF6DC'; ctx.fill(); ctx.strokeStyle = 'rgba(70,40,15,0.9)'; ctx.lineWidth = LW; ctx.stroke();
+}
+function bootAt(x, y, S, ang){ rrect(x - S * 0.1, y - S * 0.02, S * 0.22, S * 0.13, S * 0.05, BOOT, OUTL); }
+function drawFrontBack(S, ph, mv, back){
+  LW = Math.max(1.2, S * 0.042);
+  const sw = ph * mv;
+  // le foulard flotte derrière, d'un côté
+  drawScarfTail(S, -S * 0.1, -S * 0.7, 0.28 + 0.34 * mv, -1);
+  // jambes : longues foulées, l'une se lève quand l'autre pose le pied
   for (const k of [-1, 1]){
-    const off = k * ph * S * 0.07 * mv;
-    rrect(k * S * 0.31 - S * 0.07, -S * 0.6 + off, S * 0.14, S * 0.32, S * 0.06, k < 0 ? '#E3DAC2' : '#C7BA99', OUTL);
-    ctx.beginPath(); ctx.arc(k * S * 0.31, -S * 0.27 + off, S * 0.07, 0, Math.PI * 2); ctx.fillStyle = BOOT; ctx.fill();
+    const lift = Math.max(0, k * ph) * S * 0.16 * mv, spread = Math.abs(k * ph) * S * 0.03 * mv;
+    rrect(k * (S * 0.12 + spread) - S * 0.085, -S * 0.38 - lift, S * 0.17, S * 0.32, S * 0.06, TROUSER, OUTL);
+    rrect(k * (S * 0.12 + spread) - S * 0.115, -S * 0.1 - lift, S * 0.23, S * 0.13, S * 0.055, BOOT, OUTL);
+  }
+  // le sac : la couverture roulée dépasse (face) ; le gros sac couvre le dos (dos)
+  if (!back){
+    rrect(-S * 0.37, -S * 0.77, S * 0.74, S * 0.13, S * 0.065, KHAKI, OUTL);
+    for (const k of [-1, 1]){ ctx.beginPath(); ctx.arc(k * S * 0.37, -S * 0.705, S * 0.045, 0, Math.PI * 2); ctx.strokeStyle = 'rgba(70,50,20,0.7)'; ctx.lineWidth = 1; ctx.stroke(); }
+  }
+  // bras : poings dans des moufles, qui balancent à l'opposé des jambes
+  for (const k of [-1, 1]){
+    const off = k * ph * S * 0.1 * mv, inw = mv * S * 0.03;
+    rrect(k * S * 0.3 - S * 0.075 - k * inw, -S * 0.66 + off, S * 0.15, S * 0.3, S * 0.065, k < 0 ? '#E8DEC4' : '#D2C6A6', OUTL);
+    ctx.beginPath(); ctx.arc(k * (S * 0.31 - inw), -S * 0.34 + off, S * 0.095, 0, Math.PI * 2); ctx.fillStyle = MITT; ctx.fill(); strokeOut();
   }
   // torse
-  rrect(-S * 0.26, -S * 0.64, S * 0.52, S * 0.4, S * 0.1, jacketGrad(S, -0.26, 0.26), OUTL);
+  rrect(-S * 0.27, -S * 0.7, S * 0.54, S * 0.36, S * 0.1, jacketGrad(S, -0.27, 0.27), OUTL);
   if (!back){
-    ctx.strokeStyle = COPPER; ctx.lineWidth = Math.max(1.4, S * 0.07); ctx.lineCap = 'round';
-    ctx.beginPath(); ctx.moveTo(-S * 0.11, -S * 0.62); ctx.lineTo(-S * 0.11, -S * 0.27); ctx.moveTo(S * 0.11, -S * 0.62); ctx.lineTo(S * 0.11, -S * 0.27); ctx.stroke();
-    rrect(-S * 0.26, -S * 0.3, S * 0.52, S * 0.06, S * 0.02, '#3A2A20');
-    rrect(-S * 0.05, -S * 0.31, S * 0.1, S * 0.08, S * 0.02, COPPER);
+    ctx.strokeStyle = COPPER; ctx.lineWidth = Math.max(1.5, S * 0.07); ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(-S * 0.12, -S * 0.68); ctx.lineTo(-S * 0.12, -S * 0.36); ctx.moveTo(S * 0.12, -S * 0.68); ctx.lineTo(S * 0.12, -S * 0.36); ctx.stroke();
+    rrect(-S * 0.27, -S * 0.4, S * 0.54, S * 0.07, S * 0.02, '#3A2A20');
+    rrect(-S * 0.055, -S * 0.41, S * 0.11, S * 0.09, S * 0.02, '#C9C1B0', OUTL);                     // la boucle
   } else {
-    // sac à dos et couverture roulée
-    rrect(-S * 0.23, -S * 0.6, S * 0.46, S * 0.36, S * 0.08, LEATHER, OUTL);
-    ctx.strokeStyle = 'rgba(40,24,12,0.45)'; ctx.beginPath(); ctx.moveTo(-S * 0.2, -S * 0.46); ctx.lineTo(S * 0.2, -S * 0.46); ctx.stroke();
-    rrect(-S * 0.27, -S * 0.68, S * 0.54, S * 0.11, S * 0.05, KHAKI, OUTL);
+    rrect(-S * 0.24, -S * 0.68, S * 0.48, S * 0.4, S * 0.09, LEATHER, OUTL);                          // le sac
+    ctx.strokeStyle = 'rgba(40,24,12,0.55)'; ctx.lineWidth = 1;                                          // les sangles et le rabat
+    ctx.beginPath(); ctx.moveTo(-S * 0.2, -S * 0.46); ctx.lineTo(S * 0.2, -S * 0.46); ctx.moveTo(-S * 0.14, -S * 0.66); ctx.lineTo(-S * 0.14, -S * 0.3); ctx.moveTo(S * 0.14, -S * 0.66); ctx.lineTo(S * 0.14, -S * 0.3); ctx.stroke();
+    rrect(-S * 0.36, -S * 0.78, S * 0.72, S * 0.14, S * 0.07, KHAKI, OUTL);                           // la couverture roulée
+    for (const k of [-1, 1]){ ctx.beginPath(); ctx.arc(k * S * 0.36, -S * 0.71, S * 0.05, 0, Math.PI * 2); ctx.strokeStyle = 'rgba(70,50,20,0.75)'; ctx.lineWidth = 1; ctx.stroke(); }
   }
-  // la tête : sous le casque, un creux d'ombre et un foulard (face) ; rien (dos)
-  ctx.beginPath(); ctx.arc(0, -S * 0.76, S * 0.2, 0, Math.PI * 2); ctx.fillStyle = '#2B1E16'; ctx.fill();
-  if (!back){
-    rrect(-S * 0.2, -S * 0.78, S * 0.4, S * 0.1, S * 0.03, '#100A07');
-    ctx.beginPath(); ctx.moveTo(-S * 0.19, -S * 0.69); ctx.lineTo(S * 0.19, -S * 0.69); ctx.lineTo(S * 0.12, -S * 0.56); ctx.lineTo(-S * 0.12, -S * 0.56); ctx.closePath();
-    ctx.fillStyle = SCARF; ctx.fill(); ctx.strokeStyle = OUTL; ctx.stroke();
-  }
-  if (helmet){
-    drawHelmetTop(S, 0, -S * 0.76);
-    rrect(-S * 0.33, -S * 0.78, S * 0.66, S * 0.07, S * 0.03, '#8A4A22', OUTL);            // le bord
-    ctx.strokeStyle = 'rgba(255,226,186,0.55)'; ctx.lineWidth = Math.max(1, S * 0.05);
-    ctx.beginPath(); ctx.moveTo(0, -S * 1.01); ctx.lineTo(0, -S * 0.79); ctx.stroke();      // l'arête
-    if (!back) rrect(-S * 0.07, -S * 0.98, S * 0.14, S * 0.1, S * 0.03, '#FFF6DC', 'rgba(50,24,8,0.8)');   // la lampe
+  // la tête : un creux d'ombre uniforme, rien d'autre
+  ctx.beginPath(); ctx.ellipse(0, -S * 0.86, S * 0.23, S * 0.22, 0, 0, Math.PI * 2); ctx.fillStyle = back ? '#3B2A1E' : SHADOW; ctx.fill(); strokeOut();
+  if (!back){                                                                                          // le foulard monte jusqu'au bord du casque
+    ctx.beginPath(); ctx.moveTo(-S * 0.23, -S * 0.9); ctx.lineTo(S * 0.23, -S * 0.9); ctx.lineTo(S * 0.2, -S * 0.74); ctx.lineTo(0, -S * 0.55); ctx.lineTo(-S * 0.2, -S * 0.74); ctx.closePath();
+    ctx.fillStyle = SCARF; ctx.fill(); strokeOut();
+    ctx.strokeStyle = 'rgba(30,10,4,0.4)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(-S * 0.1, -S * 0.84); ctx.lineTo(-S * 0.02, -S * 0.64); ctx.moveTo(S * 0.1, -S * 0.84); ctx.lineTo(S * 0.02, -S * 0.64); ctx.stroke();
   } else {
-    ctx.beginPath(); ctx.ellipse(0, -S * 0.78, S * 0.21, S * 0.19, 0, Math.PI, 0); ctx.fillStyle = '#3B2A1E'; ctx.fill(); ctx.strokeStyle = OUTL; ctx.stroke();
   }
+  drawHelmet(S, 0, -S * 0.9, S * 0.39, 0);
+  if (helmet && !back) drawLamp(0, -S * 1.04, S * 0.075);
   if (hasPick){
     const k = back ? -1 : 1;                       // la main qui tient la pioche : à droite de l'écran de face, à gauche de dos
-    drawHeldPick(S, back ? 'up' : 'down', k * S * 0.31, -S * 0.27);
+    drawHeldPick(S, back ? 'up' : 'down', k * S * 0.31, -S * 0.3);
   }
 }
 function drawSide(S, ph, mv){
+  LW = Math.max(1.2, S * 0.042);
   const sw = ph * mv;
+  ctx.save();
+  ctx.translate(0, -S * 0.36); ctx.rotate(0.03 + 0.13 * mv); ctx.translate(0, S * 0.36);        // il se penche vers l'avant quand il court
+  // le foulard, long et vif, derrière
+  drawScarfTail(S, -S * 0.12, -S * 0.7, 0.3 + 0.42 * mv, -1);
   // sac et couverture, derrière
-  rrect(-S * 0.38, -S * 0.62, S * 0.22, S * 0.36, S * 0.07, LEATHER, OUTL);
-  rrect(-S * 0.4, -S * 0.7, S * 0.26, S * 0.1, S * 0.05, KHAKI, OUTL);
-  // jambe lointaine, puis proche (les deux pivotent à la hanche)
+  rrect(-S * 0.4, -S * 0.64, S * 0.26, S * 0.38, S * 0.08, LEATHER, OUTL);
+  ctx.fillStyle = 'rgba(40,24,12,0.5)'; ctx.fillRect(-S * 0.37, -S * 0.46, S * 0.2, S * 0.05);
+  rrect(-S * 0.42, -S * 0.78, S * 0.3, S * 0.14, S * 0.07, KHAKI, OUTL);
+  ctx.beginPath(); ctx.arc(-S * 0.27, -S * 0.71, S * 0.05, 0, Math.PI * 2); ctx.strokeStyle = 'rgba(70,50,20,0.75)'; ctx.lineWidth = 1; ctx.stroke();
+  // jambes : cuisse puis mollet qui plie, la jambe arrière se replie derrière lui
   for (const k of [-1, 1]){
-    ctx.save(); ctx.translate(0, -S * 0.28); ctx.rotate(k * sw * 0.75);
-    rrect(-S * 0.075, 0, S * 0.15, S * 0.3, S * 0.05, k < 0 ? '#3B2E24' : TROUSER, OUTL);
-    rrect(-S * 0.06, S * 0.22, S * 0.24, S * 0.09, S * 0.04, BOOT, OUTL);
+    const a = -k * sw * 0.9;                                          // négatif = vers l'avant
+    ctx.save(); ctx.translate(0, -S * 0.36); ctx.rotate(a);
+    rrect(-S * 0.08, -S * 0.02, S * 0.16, S * 0.2, S * 0.06, k < 0 ? '#3B2E24' : TROUSER, OUTL);
+    ctx.translate(0, S * 0.17); ctx.rotate(a > 0 ? a * 1.15 : -a * 0.15);
+    rrect(-S * 0.07, -S * 0.02, S * 0.14, S * 0.2, S * 0.05, k < 0 ? '#3B2E24' : TROUSER, OUTL);
+    rrect(-S * 0.06, S * 0.11, S * 0.26, S * 0.1, S * 0.045, BOOT, OUTL);
     ctx.restore();
   }
   // bras lointain
-  ctx.save(); ctx.translate(0, -S * 0.58); ctx.rotate(sw * 0.8);
-  rrect(-S * 0.06, 0, S * 0.12, S * 0.3, S * 0.05, '#C7BA99', OUTL); ctx.restore();
+  const arm = (k, col) => {
+    ctx.save(); ctx.translate(S * 0.02, -S * 0.6); ctx.rotate(k * sw * 1.0);
+    rrect(-S * 0.065, -S * 0.02, S * 0.13, S * 0.2, S * 0.05, col, OUTL);
+    ctx.translate(0, S * 0.17); ctx.rotate(-1.0 + Math.max(0, -k * sw) * 0.5);
+    rrect(-S * 0.06, -S * 0.02, S * 0.12, S * 0.17, S * 0.05, col, OUTL);
+    ctx.beginPath(); ctx.arc(0, S * 0.17, S * 0.09, 0, Math.PI * 2); ctx.fillStyle = MITT; ctx.fill(); strokeOut();
+    ctx.restore();
+  };
+  arm(1, '#CDBF9E');
   // torse
-  rrect(-S * 0.18, -S * 0.64, S * 0.36, S * 0.4, S * 0.09, jacketGrad(S, -0.18, 0.18), OUTL);
-  ctx.strokeStyle = COPPER; ctx.lineWidth = Math.max(1.4, S * 0.07); ctx.lineCap = 'round';
-  ctx.beginPath(); ctx.moveTo(-S * 0.1, -S * 0.62); ctx.lineTo(S * 0.1, -S * 0.3); ctx.stroke();
-  rrect(-S * 0.18, -S * 0.3, S * 0.36, S * 0.06, S * 0.02, '#3A2A20');
-  // bras proche
-  ctx.save(); ctx.translate(0, -S * 0.58); ctx.rotate(-sw * 0.8);
-  rrect(-S * 0.065, 0, S * 0.13, S * 0.3, S * 0.05, '#E3DAC2', OUTL);
-  ctx.beginPath(); ctx.arc(0, S * 0.31, S * 0.07, 0, Math.PI * 2); ctx.fillStyle = BOOT; ctx.fill(); ctx.restore();
-  // tête de profil : creux d'ombre sous le bord, foulard
-  ctx.beginPath(); ctx.arc(S * 0.02, -S * 0.76, S * 0.2, 0, Math.PI * 2); ctx.fillStyle = '#2B1E16'; ctx.fill();
-  ctx.beginPath(); ctx.ellipse(S * 0.14, -S * 0.73, S * 0.09, S * 0.06, 0, 0, Math.PI * 2); ctx.fillStyle = '#100A07'; ctx.fill();
-  rrect(S * 0.0, -S * 0.69, S * 0.22, S * 0.1, S * 0.04, SCARF, OUTL);
-  if (helmet){
-    drawHelmetTop(S, S * 0.0, -S * 0.77);
-    rrect(-S * 0.24, -S * 0.79, S * 0.64, S * 0.07, S * 0.03, '#8A4A22', OUTL);           // le bord, qui avance
-    ctx.strokeStyle = 'rgba(255,226,186,0.55)'; ctx.lineWidth = Math.max(1, S * 0.05);
-    ctx.beginPath(); ctx.arc(S * 0.0, -S * 0.77, S * 0.2, Math.PI * 1.1, Math.PI * 1.9); ctx.stroke();
-    rrect(S * 0.2, -S * 0.9, S * 0.13, S * 0.11, S * 0.03, '#FFF6DC', 'rgba(50,24,8,0.8)');  // la lampe, devant
-  } else {
-    ctx.beginPath(); ctx.ellipse(S * 0.02, -S * 0.79, S * 0.21, S * 0.19, 0, Math.PI, 0); ctx.fillStyle = '#3B2A1E'; ctx.fill(); ctx.strokeStyle = OUTL; ctx.stroke();
-  }
-  if (hasPick) drawHeldPick(S, 'side', S * 0.1, -S * 0.3);
+  rrect(-S * 0.18, -S * 0.7, S * 0.36, S * 0.38, S * 0.09, jacketGrad(S, -0.18, 0.18), OUTL);
+  ctx.strokeStyle = COPPER; ctx.lineWidth = Math.max(1.5, S * 0.07); ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(-S * 0.1, -S * 0.68); ctx.lineTo(S * 0.1, -S * 0.38); ctx.stroke();
+  rrect(-S * 0.18, -S * 0.4, S * 0.36, S * 0.07, S * 0.02, '#3A2A20');
+  arm(-1, '#EDE3C9');
+  // la tête : un creux d'ombre, le foulard sur le bas, rien d'autre
+  ctx.beginPath(); ctx.arc(S * 0.03, -S * 0.86, S * 0.23, 0, Math.PI * 2); ctx.fillStyle = SHADOW; ctx.fill(); strokeOut();
+  ctx.beginPath(); ctx.moveTo(-S * 0.14, -S * 0.9); ctx.lineTo(S * 0.26, -S * 0.9); ctx.lineTo(S * 0.24, -S * 0.74); ctx.lineTo(S * 0.1, -S * 0.58); ctx.lineTo(-S * 0.1, -S * 0.7); ctx.closePath();
+  ctx.fillStyle = SCARF; ctx.fill(); strokeOut();
+  drawHelmet(S, S * 0.03, -S * 0.9, S * 0.41, 1);
+  if (helmet) drawLamp(S * 0.33, -S * 1.0, S * 0.075);
+  ctx.restore();
+  if (hasPick) drawHeldPick(S, 'side', S * 0.12, -S * 0.3);
 }
 function drawExplorer(){
   chooseView();
@@ -3155,7 +3195,7 @@ function drawExplorer(){
   ctx.fillStyle = 'rgba(0,0,0,' + (0.42 - lift / cell * 0.26).toFixed(3) + ')';
   ctx.beginPath(); ctx.ellipse(player.x, fyg, S * 0.3 * (1 - lift / cell * 0.35), S * 0.1 * (1 - lift / cell * 0.35), 0, 0, Math.PI * 2); ctx.fill();
   ctx.save();
-  ctx.translate(player.x, fyg - lift - Math.abs(ph) * S * 0.035 * mv);
+  ctx.translate(player.x, fyg - lift - Math.abs(ph) * S * 0.07 * mv);
   if (invuln > 0 && Math.sin(tnow * 34) > 0) ctx.globalAlpha = 0.35;
   ctx.lineJoin = 'round'; ctx.lineCap = 'round';
   if (player.view === 'side'){ ctx.scale(player.sx, 1); drawSide(S, ph, mv); }
