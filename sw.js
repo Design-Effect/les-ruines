@@ -1,7 +1,10 @@
-// Les Ruines — service worker : jeu jouable hors-ligne
-const CACHE = 'ruines-v2';
-const CORE = ['./', './index.html', './manifest.json',
-              './icon-192.png', './icon-512.png', './apple-touch-icon.png'];
+// Les Ruines : service worker : jeu jouable hors-ligne, sans aucun appel réseau.
+// Tout est précaché à l'installation (polices et sons compris) ; ensuite, cache seul.
+const CACHE = 'ruines-v3';
+const CORE = ['./', './index.html', './sons.js', './manifest.json',
+              './icon-192.png', './icon-512.png', './apple-touch-icon.png',
+              './polices/alegreya-400i.woff2', './polices/alegreya-500.woff2',
+              './polices/cinzel-500.woff2', './polices/cinzel-600.woff2'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(CORE)).then(() => self.skipWaiting()));
@@ -13,14 +16,7 @@ self.addEventListener('activate', (e) => {
       .then(() => self.clients.claim())
   );
 });
-// cache d'abord, réseau ensuite ; les polices sont mises en cache au passage
 self.addEventListener('fetch', (e) => {
   if (e.request.method !== 'GET') return;
-  e.respondWith(
-    caches.match(e.request).then((hit) => hit || fetch(e.request).then((res) => {
-      const copy = res.clone();
-      caches.open(CACHE).then((c) => c.put(e.request, copy)).catch(() => {});
-      return res;
-    }).catch(() => caches.match('./index.html')))
-  );
+  e.respondWith(caches.match(e.request).then((hit) => hit || caches.match('./index.html')));
 });
