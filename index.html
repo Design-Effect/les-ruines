@@ -285,7 +285,7 @@
 
 <!-- Écran de pause -->
 <div id="boons" class="screen hidden">
-  <h2>Choisis ta bénédiction</h2>
+  <h2>Choisis ton bonus</h2>
   <div class="boonsub">Elle te suit jusqu&rsquo;à la fin de la partie</div>
   <div id="boonCards"></div>
 </div>
@@ -370,7 +370,7 @@ const STYLES = [
   { id: 'geode',       nom: 'La Géode',       hint: 'les portails te transportent',       masks: ['losange', 'anneau', 'rect'],     cell: [0.90, 1.05], braid: [0.20, 0.35], portals: 2 },
   { id: 'marais',      nom: 'Le Marais',      hint: 'la boue ralentit',                   masks: ['anneau', 'diagonale', 'rect'],   cell: [0.90, 1.05], braid: [0.20, 0.30], slow: 0.28, slowMul: 0.5 },
 ];
-// ---------- Les bénédictions (lot 9) : un choix à chaque passage, trois cartes visibles, rien au hasard ----------
+// ---------- Les bonus (lot 9) : un choix à chaque passage, trois cartes visibles, rien au hasard ----------
 const BOONS = {
   casque:   { fam: 'def', nom: 'Casque de rechange', txt: 'un second casque, rendu à chaque étage', g: 'C' },
   pioche:   { fam: 'def', nom: 'Pioche durable',     txt: '+4 s de pioche à chaque prise',          g: 'P' },
@@ -1802,7 +1802,7 @@ async function endGame(){
     'Tenu ' + dur + (stat.bonus ? ' · <b>' + stat.bonus + '</b> bonus' : '') +
     (stat.filon ? ' · <b>' + stat.filon + '</b> filon' + (stat.filon > 1 ? 's' : '') : '') + (stat.vag ? ' · <b>' + stat.vag + '</b> vagabond' + (stat.vag > 1 ? 's' : '') : '') +
     (stat.squashed ? ' · <b>' + stat.squashed + '</b> écrasé' + (stat.squashed > 1 ? 's' : '') : '') +
-    (Object.keys(boons).length ? '<br>Bénédictions : ' + Object.keys(boons).map((b) => BOONS[b].nom).join(', ') : '');
+    (Object.keys(boons).length ? '<br>Bonus : ' + Object.keys(boons).map((b) => BOONS[b].nom).join(', ') : '');
   ui.overTitle.textContent = deathCause === 'ennemi' ? 'Les ruines t\u2019ont rattrapé\u2026' : 'La pierre t\u2019a recouvert\u2026';
   ui.over.classList.remove('hidden');
 }
