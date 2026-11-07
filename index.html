@@ -162,6 +162,25 @@
   }
   @keyframes breathe{0%,100%{opacity:.45}50%{opacity:1}}
 
+  #boons{background:rgba(10,16,12,.8)}
+  #boons h2{font-family:'Cinzel',Georgia,serif;font-weight:600;font-size:22px;letter-spacing:.14em;text-transform:uppercase;color:var(--copper-light)}
+  .boonsub{margin-top:6px;font-size:14px;color:rgba(240,234,217,.6)}
+  #boonCards{margin-top:22px;display:flex;flex-direction:column;gap:12px;width:min(88vw,360px)}
+  .boon{
+    text-align:left;min-height:84px;padding:12px 16px 12px 18px;border-radius:14px;cursor:pointer;
+    font-family:'Alegreya',Georgia,serif;color:var(--ivory);
+    background:rgba(20,30,24,.88);border:1px solid rgba(240,234,217,.22);border-left:4px solid var(--c,#C97B3D);
+    display:block;width:100%;
+  }
+  .boon:active{transform:scale(.985)}
+  .boon:focus-visible{outline:2px solid var(--copper);outline-offset:2px}
+  .boon small{display:block;font-family:'Cinzel',Georgia,serif;font-size:10.5px;letter-spacing:.2em;text-transform:uppercase;color:var(--c,#C97B3D)}
+  .boon b{display:block;margin-top:3px;font-size:19px;font-weight:500}
+  .boon span{display:block;margin-top:2px;font-size:14.5px;color:rgba(240,234,217,.72);line-height:1.3}
+  #boonHud{position:fixed;top:max(46px, calc(env(safe-area-inset-top) + 28px));left:16px;z-index:6;display:flex;flex-direction:column;gap:4px;pointer-events:none;opacity:0;transition:opacity .4s ease}
+  #hud.visible ~ #boonHud{opacity:1}
+  #boonHud i{width:20px;height:20px;border-radius:50%;border:1.5px solid var(--c);background:rgba(14,22,17,.85);color:var(--c);font:600 10px/17px 'Cinzel',Georgia,serif;text-align:center;font-style:normal}
+  #helmet.spare::after{content:'+1';position:absolute;right:-14px;top:-4px;font:600 10px 'Cinzel',Georgia,serif;color:var(--copper-light)}
   .best{
     margin-top:14px;font-size:16px;letter-spacing:.16em;
     color:rgba(240,234,217,.55);
@@ -236,6 +255,7 @@
 </div>
 <div id="banner"></div>
 <div id="helmet"><i></i><b></b><u></u></div>
+<div id="boonHud"></div>
 
 <button id="mute" aria-label="Volume">♪</button>
 
@@ -264,6 +284,12 @@
 </div>
 
 <!-- Écran de pause -->
+<div id="boons" class="screen hidden">
+  <h2>Choisis ta bénédiction</h2>
+  <div class="boonsub">Elle te suit jusqu&rsquo;à la fin de la partie</div>
+  <div id="boonCards"></div>
+</div>
+
 <div id="pause" class="screen hidden">
   <h2>En pause</h2>
   <div class="hint">Touche l&rsquo;écran pour reprendre</div>
@@ -344,6 +370,21 @@ const STYLES = [
   { id: 'geode',       nom: 'La Géode',       hint: 'les portails te transportent',       masks: ['losange', 'anneau', 'rect'],     cell: [0.90, 1.05], braid: [0.20, 0.35], portals: 2 },
   { id: 'marais',      nom: 'Le Marais',      hint: 'la boue ralentit',                   masks: ['anneau', 'diagonale', 'rect'],   cell: [0.90, 1.05], braid: [0.20, 0.30], slow: 0.28, slowMul: 0.5 },
 ];
+// ---------- Les bénédictions (lot 9) : un choix à chaque passage, trois cartes visibles, rien au hasard ----------
+const BOONS = {
+  casque:   { fam: 'def', nom: 'Casque de rechange', txt: 'un second casque, rendu à chaque étage', g: 'C' },
+  pioche:   { fam: 'def', nom: 'Pioche durable',     txt: '+4 s de pioche à chaque prise',          g: 'P' },
+  velours:  { fam: 'def', nom: 'Pas de velours',     txt: 'les passages s\u2019annoncent plus tôt', g: 'V' },
+  semelles: { fam: 'mov', nom: 'Semelles légères',   txt: 'tu cours 8 % plus vite',                  g: 'S' },
+  souffle:  { fam: 'mov', nom: 'Souffle long',       txt: 'les bonus durent 1,5 fois plus',          g: 'B' },
+  sang:     { fam: 'mov', nom: 'Sang-froid',         txt: 'les ennemis vont 15 % moins vite',        g: 'F' },
+  poche:    { fam: 'loot', nom: 'Aimant de poche',   txt: 'les éclats proches glissent vers toi',    g: 'A' },
+  oeil:     { fam: 'loot', nom: 'Œil de prospecteur', txt: 'l\u2019enchaînement tient 1,5 s de plus', g: 'O' },
+  filon:    { fam: 'loot', nom: 'Filon riche',       txt: 'filons et vagabonds deux fois plus fréquents', g: 'R' },
+};
+const BOON_FAM = { def: ['casque', 'pioche', 'velours'], mov: ['semelles', 'souffle', 'sang'], loot: ['poche', 'oeil', 'filon'] };
+const FAM_META = { def: { nom: 'Défense', col: '#A7B8BD' }, mov: { nom: 'Mouvement', col: '#A4CFA8' }, loot: { nom: 'Butin', col: '#E8B27D' } };
+const FOUILLE_PTS = 150;     // famille épuisée : butin de fouille
 const REGION_MAX    = 0.6;   // étendue maximale d'une vague (profondeurs avancées)
 const PORTAL_COL = ['#B98CF2', '#6FE0E8'];
 const BOOST_MUL     = 1.45;  // dalles d'élan (Les Mosaïques)
@@ -394,6 +435,7 @@ const ui = {
   goal:       document.getElementById('goal'),
   helmet:     document.getElementById('helmet'),
   overTitle:  document.getElementById('overTitle'),
+  boons:      document.getElementById('boons'),
 };
 
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -420,6 +462,7 @@ let jump = null, bondN = 0, bondT = 0;
 let roomMask = null;
 let stat = { near: 0, bestCombo: 0, relics: 0, bonus: 0, squashed: 0, filon: 0, vag: 0 };
 let deathCause = 'pierre', bondMsgT = -9, lastGoal = '';
+let boons = {}, helmetExtra = 0, boonOffer = [];
 let helmet = true, invuln = 0;   // le casque : une vie en plus
 let swing = null, attackCd = 0;  // le coup de pioche en cours
 const CASQUE_META = { nom: 'Casque', col: [232, 178, 125], aide: 'casque neuf' };
@@ -656,7 +699,7 @@ function buildWalls(){
 // + boucles. L'union-find garantit que TOUT reste connecté après la vague.
 function teleDur(){
   if (state !== 'playing') return 1.6;
-  return Math.max(TELE_MIN, TELE_START - stageT * 0.004 - stageGot * 0.012);
+  return Math.max(TELE_MIN, TELE_START - stageT * 0.004 - stageGot * 0.012) + (boons.velours ? 0.35 : 0);
 }
 function waveDelay(){
   if (state !== 'playing') return 4.5;
@@ -864,9 +907,9 @@ function spawnTreasure(){
   // relique : rare, une seule à la fois, posée plus loin
   let hasBig = false, hasVag = false;
   for (const t of treasures){ if (t.big) hasBig = true; if (t.kind === 'vag') hasVag = true; }
-  if (!treasures.length && Math.random() < FILON_CHANCE && spawnFilon(pr, d)) return;
+  if (!treasures.length && Math.random() < FILON_CHANCE * (boons.filon ? 2 : 1) && spawnFilon(pr, d)) return;
   const big = !hasBig && Math.random() < BIG_CHANCE;
-  const vag = !big && !hasVag && Math.random() < VAG_CHANCE;
+  const vag = !big && !hasVag && Math.random() < VAG_CHANCE * (boons.filon ? 2 : 1);
   const lo = big ? 6 : 4, hi = big ? 13 : 14;
   const far = [], any = [];
   for (let k = 0; k < d.length; k++){
@@ -903,6 +946,57 @@ function nearMiss(){
   playNear();
   buzz(20);
 }
+function pickDur(){ return PICK_DURATION + (boons.pioche ? 4 : 0); }
+function comboWin(){ return COMBO_WINDOW + (boons.oeil ? 1.5 : 0); }
+function fxMax(k){ return FX_META[k].time * (boons.souffle ? 1.5 : 1); }
+// trois cartes, une par famille : la première que tu n'as pas encore (ordre fixe)
+function offerBoons(){
+  const out = [];
+  for (const f of ['def', 'mov', 'loot']){
+    const id = BOON_FAM[f].find((b) => !boons[b]);
+    out.push({ fam: f, id: id || null });
+  }
+  return out;
+}
+function renderBoonHud(){
+  const el = document.getElementById('boonHud');
+  el.innerHTML = '';
+  for (const id in boons){
+    const b = BOONS[id], i = document.createElement('i');
+    i.style.setProperty('--c', FAM_META[b.fam].col); i.textContent = b.g; el.appendChild(i);
+  }
+}
+function reachExit(){
+  state = 'choice'; jump = null; swing = null;
+  for (const k in fx) fx[k] = 0;
+  boonOffer = offerBoons();
+  ui.banner.classList.remove('go');
+  const box = document.getElementById('boonCards');
+  box.innerHTML = '';
+  boonOffer.forEach((o, k) => {
+    const m = o.id ? BOONS[o.id] : null, fm = FAM_META[o.fam];
+    const btn = document.createElement('button');
+    btn.type = 'button'; btn.className = 'boon'; btn.style.setProperty('--c', fm.col);
+    btn.innerHTML = '<small>' + fm.nom + '</small><b>' + (m ? m.nom : 'Butin de fouille') + '</b><span>' + (m ? m.txt : '+' + FOUILLE_PTS + ' points') + '</span>';
+    btn.addEventListener('click', (e) => { e.stopPropagation(); pickBoon(k); });
+    box.appendChild(btn);
+  });
+  ui.boons.classList.remove('hidden');
+  snd('bell', 0.5, 1.2); snd('up', 0.35, 1.1, 0.06); buzz(25);
+}
+function pickBoon(k){
+  if (state !== 'choice') return;
+  const o = boonOffer[k]; if (!o) return;
+  if (o.id){
+    boons[o.id] = true;
+    if (o.id === 'casque') helmetExtra = 1;
+    addText(exitP.x, exitP.y - 40, BOONS[o.id].nom, true);
+  } else { score += FOUILLE_PTS; addText(exitP.x, exitP.y - 40, '+' + FOUILLE_PTS, true); }
+  renderBoonHud();
+  ui.boons.classList.add('hidden');
+  snd('click4', 0.6, 1.0); snd('latch', 0.5, 1.1, 0.04); snd('sw26', 0.35, 1.2, 0.08);
+  startTransition();
+}
 function showBanner(title, sub){
   ui.banner.innerHTML = title + '<small>' + sub + '</small>';
   ui.banner.classList.remove('go');
@@ -911,7 +1005,7 @@ function showBanner(title, sub){
 }
 function collectTreasure(t){
   combo = comboTimer > 0 ? combo + 1 : 1;
-  comboTimer = COMBO_WINDOW;
+  comboTimer = comboWin();
   const pts = TREASURE_PTS * (t.big ? BIG_MULT : (t.kind === 'vag' ? VAG_MULT : 1)) * combo;
   const tc = 'rgb(' + tskin().glow.join(',') + ')';
   score += pts;
@@ -980,7 +1074,7 @@ function nextStage(){
   pick = null; hasPick = false; pickT = PICK_FIRST; pickTime = 0; digT = 0; swing = null;
   bonus = null; bonusT = BONUS_FIRST * 0.6; bonusBag = []; lastBonus = null;
   for (const k in fx){ fx[k] = 0; fxTickT[k] = 0; }
-  exitP = null; stageGot = 0; stageT = 0; jump = null; bondN = 0; helmet = true; invuln = 0;
+  exitP = null; stageGot = 0; stageT = 0; jump = null; bondN = 0; helmet = true; helmetExtra = boons.casque ? 1 : 0; invuln = 0;
   combo = 0; comboTimer = 0;
   const sr = startRoom();
   player.x = player.tx = originX + (2*sr[0] + 1.5) * cell;
@@ -1086,7 +1180,9 @@ function squashEnemy(e, label, basePts){
 }
 // le casque saute : l'explorateur est repoussé d'une case, l'ennemi est assommé, un instant d'invulnérabilité
 function loseHelmet(e){
-  helmet = false; invuln = INVULN; e.stun = STUN_HELMET;
+  const spare = helmetExtra > 0;
+  if (spare) helmetExtra--; else helmet = false;
+  invuln = INVULN; e.stun = STUN_HELMET;
   let dx = player.x - e.x, dy = player.y - e.y;
   const d = Math.hypot(dx, dy) || 1; dx /= d; dy /= d;
   // on recule de préférence à l'opposé de l'ennemi ; si la pierre barre, on essaie les autres sens
@@ -1106,7 +1202,7 @@ function loseHelmet(e){
                    r: cell * 0.3, life: 1, decay: 0.45, color: COPPER, kind: 'helm', rot: 0, vr: 9, grav: 420, ground: player.y + cell * 0.25 });
   burst(player.x, player.y, reducedMotion ? 4 : 10, 150, '#FFE9C8', 'spark');
   addRing(player.x, player.y);
-  addText(player.x, player.y - 36, 'casque !', true);
+  addText(player.x, player.y - 36, spare ? 'casque de rechange !' : 'casque !', true);
   if (!reducedMotion) shake = Math.max(shake, 5);
   playHelmetOff(); buzz(60);
 }
@@ -1119,7 +1215,7 @@ function updateEnemies(dt){
     if (!e.alive){ e.respawn -= dt; if (e.respawn <= 0) respawnEnemy(e); continue; }
     if (e.stun > 0){ e.stun -= dt; continue; }
     if (frozen) continue;
-    const sp = e.kind === 'scarab' ? SCARAB_SPEED : (e.chasing ? GARDE_SPEED : GARDE_WANDER);
+    const sp = (e.kind === 'scarab' ? SCARAB_SPEED : (e.chasing ? GARDE_SPEED : GARDE_WANDER)) * (boons.sang ? 0.85 : 1);
     if (!openCell(e.tx, e.ty)){ e.tx = e.cx; e.ty = e.cy; }
     const gx = ctrX(e.tx), gy = ctrY(e.ty);
     const dx = gx - e.x, dy = gy - e.y, dd = Math.hypot(dx, dy);
@@ -1273,7 +1369,7 @@ function fxCss(k, a){ const c = bmeta(k).col; return 'rgba(' + c[0] + ',' + c[1]
 function takeBonus(b){
   const m = bmeta(b.type);
   if (b.type === 'casque'){ helmet = true; invuln = 0.4; }
-  else { fx[b.type] = m.time; fxTickT[b.type] = 0; }
+  else { fx[b.type] = fxMax(b.type); fxTickT[b.type] = 0; }
   if (b.type === 'bond') bondN = BOND_JUMPS;
   stat.bonus++;
   addText(b.x, b.y - 14, m.nom + ' !', true);
@@ -1515,6 +1611,46 @@ function playStart(){ snd('click4', 0.6, 0.9); snd('up', 0.3, 0.8, 0.05); }
 function playRecord(){ snd('coins', 0.7, 1.1); snd('sw26', 0.5, 1, 0.05); snd('up', 0.4, 1.3, 0.1); }
 // craquement d'ambiance : la structure vit
 function playCreak(){ snd(pickOf(['creak1', 'creak3']), 0.35, rnd(0.9, 1.1)); }
+// ambiances propres à chaque monde (lot 9) : un événement doux et rare, avec son petit signe visible, sons de la banque seulement
+function ambSpot(){
+  const rooms = [];
+  for (let j = 0; j < Ry; j++) for (let i = 0; i < Rx; i++) if (!roomMask || roomMask[rid(i, j)]) rooms.push([i, j]);
+  const r = rooms[Math.floor(Math.random() * rooms.length)] || [0, 0];
+  return [ctrX(2 * r[0] + 1) + (Math.random() - 0.5) * cell * 0.5, ctrY(2 * r[1] + 1) + (Math.random() - 0.5) * cell * 0.5];
+}
+function playAmbient(){
+  const id = S().id, sp = ambSpot(), x = sp[0], y = sp[1], r = Math.random();
+  const spark = (col) => burst(x, y, reducedMotion ? 2 : 4, 38, col, 'spark');
+  const dust = (col) => puff(x, y, reducedMotion ? 1 : 3, col, true);
+  if (id === 'caverne'){
+    if (r < 0.55){ snd('glass', 0.16, rnd(2.0, 2.4)); spark('#CFEFFF'); } else { snd('creak3', 0.28, rnd(0.8, 0.9)); dust('#8A7B68'); }
+  } else if (id === 'mine'){
+    if (r < 0.34){ snd('wood', 0.3, rnd(0.8, 0.95)); } else if (r < 0.67){ snd('metalA', 0.16, rnd(0.5, 0.6)); } else { snd('creak1', 0.3, rnd(0.6, 0.75)); }
+    dust('#8A8E92');
+  } else if (id === 'cendre'){
+    snd('tick1', 0.2, rnd(1.5, 1.9)); snd('tick2', 0.16, rnd(1.9, 2.2), 0.07); snd('tick1', 0.13, rnd(1.6, 1.8), 0.13); spark('#FF9A4A');
+  } else if (id === 'dunes'){
+    snd('whoosh', 0.16, rnd(0.45, 0.6)); dust('#E6CF98');
+  } else if (id === 'glacier'){
+    if (r < 0.5){ snd('glassH', 0.22, rnd(0.55, 0.7)); snd('tick1', 0.2, rnd(2.1, 2.3), 0.08); } else { snd('glass', 0.14, rnd(1.1, 1.3)); }
+    spark('#E8F6FF');
+  } else if (id === 'citerne'){
+    snd('glass', 0.16, rnd(2.2, 2.6)); snd('soft', 0.2, rnd(1.4, 1.7), 0.05); spark('#9FE6EE');
+  } else if (id === 'scriptorium'){
+    if (r < 0.6){ snd('whoosh', 0.12, rnd(1.6, 2.0)); dust('#F2E3BE'); } else { snd('wood', 0.2, rnd(1.1, 1.3)); dust('#B98A3E'); }
+  } else if (id === 'jardin'){
+    for (let k = 0; k < 3; k++) snd('tick2', 0.13, rnd(2.3, 2.6), k * 0.09);
+    spark('#D8F08A');
+  } else if (id === 'mosaique'){
+    snd('glassH', 0.14, rnd(1.5, 1.8)); snd('bell', 0.1, rnd(2.3, 2.5), 0.03); spark('#FFD680');
+  } else if (id === 'geode'){
+    snd('glassH', 0.16, rnd(1.2, 1.5)); snd('bell', 0.12, rnd(2.0, 2.4), 0.06); spark('#C9A6FF');
+  } else if (id === 'marais'){
+    snd('soft', 0.3, rnd(0.5, 0.65)); snd('tick2', 0.14, rnd(1.0, 1.3), 0.06); dust('#7C8E55'); spark('#C8E07A');
+  } else {
+    playCreak(); dust('#7C8E83');
+  }
+}
 // la pioche
 function playPickup(){ snd('latch', 0.8, 1); snd('sw9', 0.5, 1.1, 0.02); snd('mclick', 0.5, 1.2, 0.04); }
 // UN BLOC QUI SE DÉTRUIT : l'impact de la pioche sur la pierre, le bloc qui cède,
@@ -1597,7 +1733,7 @@ function startGame(){
   score = 0; displayedScore = -1; combo = 0; comboTimer = 0;
   collected = 0; elapsed = 0; shake = 0; flash = 0;
   recordBeaten = false;
-  swing = null; attackCd = 0;
+  swing = null; attackCd = 0; boons = {}; helmetExtra = 0; renderBoonHud(); ui.boons.classList.add('hidden');
   stageIdx = 0; stageGot = 0; stageT = 0; exitP = null; jump = null; bondN = 0; grace = 0; deathCause = 'pierre'; lastGoal = ''; helmet = true; invuln = 0;
   stat = { near: 0, bestCombo: 0, relics: 0, bonus: 0, squashed: 0, filon: 0, vag: 0 };
   bonus = null; bonusT = BONUS_FIRST; bonusBag = []; lastBonus = null;
@@ -1664,7 +1800,8 @@ async function endGame(){
     'Meilleur enchaînement <b>×' + stat.bestCombo + '</b> · <b>' + stat.near + '</b> de justesse<br>' +
     'Tenu ' + dur + (stat.bonus ? ' · <b>' + stat.bonus + '</b> bonus' : '') +
     (stat.filon ? ' · <b>' + stat.filon + '</b> filon' + (stat.filon > 1 ? 's' : '') : '') + (stat.vag ? ' · <b>' + stat.vag + '</b> vagabond' + (stat.vag > 1 ? 's' : '') : '') +
-    (stat.squashed ? ' · <b>' + stat.squashed + '</b> écrasé' + (stat.squashed > 1 ? 's' : '') : '');
+    (stat.squashed ? ' · <b>' + stat.squashed + '</b> écrasé' + (stat.squashed > 1 ? 's' : '') : '') +
+    (Object.keys(boons).length ? '<br>Bénédictions : ' + Object.keys(boons).map((b) => BOONS[b].nom).join(', ') : '');
   ui.overTitle.textContent = deathCause === 'ennemi' ? 'Les ruines t\u2019ont rattrapé\u2026' : 'La pierre t\u2019a recouvert\u2026';
   ui.over.classList.remove('hidden');
 }
@@ -1766,6 +1903,8 @@ window.addEventListener('keydown', (e) => {
   } else if (state === 'paused' && e.key !== 'Tab'){
     ui.pause.classList.add('hidden');
     state = 'playing';
+  } else if (state === 'choice' && (e.key === '1' || e.key === '2' || e.key === '3')){
+    pickBoon(+e.key - 1);
   }
 });
 window.addEventListener('keyup', (e) => {
@@ -1864,7 +2003,7 @@ function update(dt){
       }
     }
     creakT -= dt;
-    if (creakT <= 0){ playCreak(); creakT = 6 + Math.random() * 9; }
+    if (creakT <= 0){ playAmbient(); creakT = 6 + Math.random() * 8; }
   }
 
   if (state === 'transition'){
@@ -1919,7 +2058,7 @@ function update(dt){
     if (dist > 0.5){
       dirx = dx / dist; diry = dy / dist;
       const terNow = terrainAt(player.x, player.y);
-      const step = Math.min(dist, cell * SPEED_CELLS * (fx.foulee > 0 ? FOULEE_MULT : 1) * (terNow === 1 ? S().slowMul : (terNow === 4 ? BOOST_MUL : 1)) * dt);
+      const step = Math.min(dist, cell * SPEED_CELLS * (boons.semelles ? 1.08 : 1) * (fx.foulee > 0 ? FOULEE_MULT : 1) * (terNow === 1 ? S().slowMul : (terNow === 4 ? BOOST_MUL : 1)) * dt);
       moveAxis(dirx * step, 0, 0);
       moveAxis(0, diry * step, 1);
     }
@@ -2072,7 +2211,7 @@ function update(dt){
     updateEnemies(dt);
     if (exitP){
       exitP.t += dt;
-      if (state === 'playing' && !jump && Math.hypot(exitP.x - player.x, exitP.y - player.y) < player.rad + cell * 0.35) startTransition();
+      if (state === 'playing' && !jump && Math.hypot(exitP.x - player.x, exitP.y - player.y) < player.rad + cell * 0.35) reachExit();
     }
 
     // trésors
@@ -2096,9 +2235,10 @@ function update(dt){
         continue;
       }
       if (t.kind === 'vag') moveVag(t, dt);
-      if (fx.aimant > 0 && t.kind !== 'vag'){
+      const aimR = fx.aimant > 0 ? AIMANT_RANGE : (boons.poche ? 1.5 : 0);
+      if (aimR > 0 && t.kind !== 'vag'){
         const mx = player.x - t.x, my = player.y - t.y, md = Math.hypot(mx, my);
-        if (md < cell * AIMANT_RANGE && md > 1){
+        if (md < cell * aimR && md > 1){
           const st = Math.min(md, cell * AIMANT_PULL * dt);
           t.x += mx / md * st; t.y += my / md * st;
           t.i = Math.max(0, Math.min(Rx - 1, Math.round(((t.x - originX) / cell - 1) / 2)));
@@ -2144,7 +2284,7 @@ function update(dt){
         pick = null;
         pickT = PICK_RESPAWN * (0.8 + Math.random() * 0.5);
       } else if (Math.hypot(pick.x - player.x, pick.y - player.y) < player.rad + cell * 0.3){
-        hasPick = true; pickTime = PICK_DURATION; pickTickT = 0;
+        hasPick = true; pickTime = pickDur(); pickTickT = 0;
         massifShown = false; digT = 0;
         addText(pick.x, pick.y - 12, 'pioche !', true);
         if (!pickHintShown){
@@ -2226,16 +2366,17 @@ function update(dt){
     if (gtxt !== lastGoal){ ui.goal.textContent = gtxt; lastGoal = gtxt; }
   }
   ui.helmet.classList.toggle('lost', !helmet);
+  ui.helmet.classList.toggle('spare', helmetExtra > 0 && helmet);
   if (chips.bond) chips.bond.firstChild.nodeValue = 'Bond ' + Math.max(0, bondN);
   for (const k in chips){
     if (fx[k] > 0 && state === 'playing'){
       chips[k].classList.add('on');
-      chips[k].lastChild.style.transform = 'scaleX(' + Math.max(0, fx[k] / FX_META[k].time).toFixed(3) + ')';
+      chips[k].lastChild.style.transform = 'scaleX(' + Math.max(0, fx[k] / fxMax(k)).toFixed(3) + ')';
     } else chips[k].classList.remove('on');
   }
   if (comboTimer > 0 && state === 'playing'){
     ui.comboBarBox.classList.add('on');
-    ui.comboBar.style.transform = 'scaleX(' + Math.max(0, comboTimer / COMBO_WINDOW).toFixed(3) + ')';
+    ui.comboBar.style.transform = 'scaleX(' + Math.max(0, comboTimer / comboWin()).toFixed(3) + ')';
   } else {
     ui.comboBarBox.classList.remove('on');
   }
@@ -3024,7 +3165,7 @@ function drawExplorer(){
   const r = player.rad * 1.12;
   // anneau acier : arc qui rétrécit = temps de pioche restant
   if (hasPick){
-    const frac = Math.max(0, pickTime / PICK_DURATION);
+    const frac = Math.max(0, pickTime / pickDur());
     let ra = 0.45 + 0.15 * Math.sin(tnow * 4);
     if (pickTime < 1.5) ra = (Math.sin(tnow * 14) > 0) ? 0.7 : 0.12;   // ça va casser
     ctx.beginPath();
@@ -3040,7 +3181,7 @@ function drawExplorer(){
     let ra = 0.85;
     if (fx[k] < 1.5) ra = (Math.sin(tnow * 14) > 0) ? 0.95 : 0.15;
     ctx.beginPath();
-    ctx.arc(player.x, player.y, r + 9 + ri * 3.6, -Math.PI / 2, -Math.PI / 2 + Math.max(0, fx[k] / FX_META[k].time) * Math.PI * 2);
+    ctx.arc(player.x, player.y, r + 9 + ri * 3.6, -Math.PI / 2, -Math.PI / 2 + Math.max(0, fx[k] / fxMax(k)) * Math.PI * 2);
     ctx.strokeStyle = fxCss(k, ra); ctx.lineWidth = 2; ctx.stroke();
     ri++;
   }
@@ -3559,7 +3700,7 @@ function draw(){
     ctx.fillStyle = 'rgba(0,0,0,0.3)';
     ctx.beginPath(); ctx.ellipse(pick.x, pick.y + cell * 0.3, cell * 0.28, cell * 0.09, 0, 0, Math.PI * 2); ctx.fill();
   }
-  if (state === 'playing' || state === 'paused') drawExplorer();
+  if (state === 'playing' || state === 'paused' || state === 'choice') drawExplorer();
 
   // cailloux et poussière
   for (const p of particles){
