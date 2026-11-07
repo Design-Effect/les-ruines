@@ -387,6 +387,7 @@ const FAM_META = { def: { nom: 'Défense', col: '#A7B8BD' }, mov: { nom: 'Mouvem
 const FOUILLE_PTS = 150;     // famille épuisée : butin de fouille
 const REGION_MAX    = 0.6;   // étendue maximale d'une vague (profondeurs avancées)
 const PORTAL_COL = ['#B98CF2', '#6FE0E8'];
+const WALK_W        = 0.3;   // cadence des jambes : radians de foulée par unité de marche (0,6 : trop vif, 4,6 foulées/s ; 0,3 : 2,3 foulées/s)
 const BOOST_MUL     = 1.45;  // dalles d'élan (Les Mosaïques)
 const PORTAL_COOL   = 0.8;   // invulnérabilité à l'arrivée d'un portail (s)
 const NEAR_PTS      = 10;    // « de justesse » : points (× combo)
@@ -2134,7 +2135,7 @@ function update(dt){
     if (player.blinkT <= -0.12) player.blinkT = 2 + Math.random() * 3;
 
     // les pas : un son par cycle de trottinement, seulement en mouvement
-    const ph = Math.floor(player.walk * 0.6 / (Math.PI * 2));
+    const ph = Math.floor(player.walk * WALK_W / Math.PI);   // un pas de pied posé à chaque demi-foulée
     if (ph !== lastStep){
       lastStep = ph;
       if (player.moving > 0.3 && !jump){
@@ -3188,7 +3189,7 @@ function drawExplorer(){
   chooseView();
   const S = cell * 1.05;
   const mv = player.moving;
-  const ph = Math.sin(player.walk * 0.6);
+  const ph = Math.sin(player.walk * WALK_W);
   const lift = jump ? Math.sin(Math.PI * Math.min(1, jump.t / jump.dur)) * cell * 0.55 : 0;   // hauteur du bond
   const fyg = player.y + cell * 0.2;                                                          // les pieds
   // ombre au sol
