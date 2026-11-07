@@ -388,6 +388,8 @@ const FOUILLE_PTS = 150;     // famille épuisée : butin de fouille
 const REGION_MAX    = 0.6;   // étendue maximale d'une vague (profondeurs avancées)
 const PORTAL_COL = ['#B98CF2', '#6FE0E8'];
 const WALK_W        = 0.3;   // cadence des jambes : radians de foulée par unité de marche (0,6 : trop vif, 4,6 foulées/s ; 0,3 : 2,3 foulées/s)
+const JOYAU_MULT    = 10;    // le joyau d'une chambre forte (× un éclat, × combo) ; il compte pour 3 dans le quota
+const MINUTE_TIME   = 6;     // plaque minutée : la porte reste ouverte (s)
 const BOOST_MUL     = 1.45;  // dalles d'élan (Les Mosaïques)
 const PORTAL_COOL   = 0.8;   // invulnérabilité à l'arrivée d'un portail (s)
 const NEAR_PTS      = 10;    // « de justesse » : points (× combo)
@@ -461,7 +463,7 @@ let transT = 0, transSwitched = false;
 let enemies = [], grace = 0, chaseField = null, chaseT = 0;
 let jump = null, bondN = 0, bondT = 0;
 let roomMask = null;
-let stat = { near: 0, bestCombo: 0, relics: 0, bonus: 0, squashed: 0, filon: 0, vag: 0 };
+let stat = { near: 0, bestCombo: 0, relics: 0, bonus: 0, squashed: 0, filon: 0, vag: 0, joyau: 0 };
 let deathCause = 'pierre', bondMsgT = -9, lastGoal = '';
 let boons = {}, helmetExtra = 0, boonOffer = [];
 let helmet = true, invuln = 0;   // le casque : une vie en plus
@@ -605,6 +607,8 @@ function newMaze(){
   let kind = sd.mask;
   for (;;){
     roomMask = makeMask(kind);
+    vaultPick = null;
+    if (stageIdx >= 1) pickVaultRoom();
     openE = new Set();
     // génération : remonte-arrière itératif → labyrinthe parfait (connecté) dans le format
     const seen = new Uint8Array(Rx * Ry);
@@ -636,6 +640,7 @@ function newMaze(){
   fixedE = new Set();
   if (sd.fixed) openE.forEach((e) => { if (Math.random() < sd.fixed) fixedE.add(e); });
   buildWalls();
+  if (vaultPick) wall[wIdx(2 * vaultPick.i + 1, 2 * vaultPick.j + 1)] = 0;
   computeLayout();
   buildSpecials();
 }
@@ -902,6 +907,157 @@ function moveVag(t, dt){
   } else { t.x += dx / dd * step; t.y += dy / dd * step; }
   if (!reducedMotion && Math.random() < dt * 12) burst(t.x, t.y, 1, 22, 'rgb(' + tskin().glow.join(',') + ')', 'spark');
 }
+// place l'énigme et le joyau (après la remise à zéro des trésors de l'étage)
+function setupVault(){
+  vault = null; hasKey = false;
+  const v = vaultPick; if (!v) return;
+  const d = roomDistances(v.ni, v.nj), pr = playerRoom();
+  const pool = (lo, hi) => {
+    const out = [];
+    for (let k = 0; k < d.length; k++){ const i = k % Rx, j = (k - i) / Rx; if (d[k] >= lo && d[k] <= hi && !(i === v.i && j === v.j) && !(i === pr[0] && j === pr[1])) out.push([i, j]); }
+    for (let k = out.length - 1; k > 0; k--){ const m = Math.floor(Math.random() * (k + 1)); const t = out[k]; out[k] = out[m]; out[m] = t; }
+    return out;
+  };
+  const kind = pickOf(['sequence', 'cle', 'minute']);
+  vault = { kind, cx: 2 * v.i + 1, cy: 2 * v.j + 1, dx: v.dx, dy: v.dy, open: false, step: 0, timer: 0, plates: [], order: [], key: null, near: false };
+  const cellPos = (r) => ({ cx: 2 * r[0] + 1, cy: 2 * r[1] + 1 });
+  if (kind === 'sequence'){
+    let rs = pool(3, 14); if (rs.length < 3) rs = pool(1, 30);
+    if (rs.length < 3){ vault.kind = 'cle'; } else {
+      for (let k = 0; k < 3; k++) vault.plates.push(Object.assign(cellPos(rs[k]), { col: k, lit: false, inside: false }));
+      vault.order = [0, 1, 2]; for (let k = 2; k > 0; k--){ const m = Math.floor(Math.random() * (k + 1)); const t = vault.order[k]; vault.order[k] = vault.order[m]; vault.order[m] = t; }
+    }
+  }
+  if (vault.kind === 'cle'){
+    let rs = pool(6, 30); if (!rs.length) rs = pool(2, 30);
+    if (!rs.length){ vault = null; return; }
+    const c = cellPos(rs[0]); vault.key = { x: ctrX(c.cx), y: ctrY(c.cy), taken: false, rot: 0 };
+  }
+  if (vault.kind === 'minute'){
+    let rs = pool(5, 8); if (!rs.length) rs = pool(3, 12); if (!rs.length) rs = pool(1, 30);
+    if (!rs.length){ vault = null; return; }
+    vault.plates.push(Object.assign(cellPos(rs[0]), { col: 3, lit: false, inside: false }));
+  }
+  treasures.push({ i: v.i, j: v.j, big: true, kind: 'joyau', x: ctrX(vault.cx), y: ctrY(vault.cy), life: 1e9, rot: 0 });
+}
+function openVault(){
+  if (!vault || vault.open) return;
+  vault.open = true; vault.timer = 0;
+  wall[wIdx(vault.dx, vault.dy)] = 0; layerDirty = true;
+  const x = ctrX(vault.dx), y = ctrY(vault.dy);
+  burst(x, y, reducedMotion ? 8 : 26, 200, '#FFD680', 'spark'); puff(x, y, 3, '#B8A070', true); addRing(x, y);
+  addText(x, y - 20, 'la porte s\u2019ouvre !', true);
+  snd('plate', 0.8, 1); snd('door2', 0.5, 0.95, 0.05); snd('up', 0.5, 1.0, 0.1); snd('bell', 0.4, 1.3, 0.14); buzz(30);
+}
+function updateVault(dt){
+  if (!vault) return;
+  const dxp = ctrX(vault.dx), dyp = ctrY(vault.dy), dd = Math.hypot(player.x - dxp, player.y - dyp);
+  // l'aide, une seule fois par sorte d'énigme, quand on s'approche
+  if (!vault.open && !vaultHint[vault.kind] && dd < cell * 3.6){
+    vaultHint[vault.kind] = true;
+    addText(dxp, dyp - 26, { sequence: 'les points : l\u2019ordre des plaques', cle: 'il faut une clé', minute: 'une plaque ouvre la porte un instant' }[vault.kind]);
+  }
+  if (vault.open) return;
+  if (vault.kind === 'sequence'){
+    for (let k = 0; k < vault.plates.length; k++){
+      const p = vault.plates[k], near = Math.hypot(player.x - ctrX(p.cx), player.y - ctrY(p.cy)) < cell * 0.38 && !jump;
+      if (near && !p.inside){
+        if (!p.lit){
+          if (vault.order[vault.step] === k){
+            p.lit = true; vault.step++; burst(ctrX(p.cx), ctrY(p.cy), 8, 120, PLATE_COL[p.col], 'spark'); addRing(ctrX(p.cx), ctrY(p.cy));
+            snd('mclick', 0.5, 1.2); snd('bell', 0.4, 1.0 + vault.step * 0.25, 0.03);
+            if (vault.step >= 3) openVault();
+          } else {
+            vault.step = 0; for (const q of vault.plates) q.lit = false;
+            snd('metalB', 0.6, 0.7); addText(ctrX(p.cx), ctrY(p.cy) - 22, 'mauvais ordre'); puff(ctrX(p.cx), ctrY(p.cy), 2, '#7A6A5A', true);
+          }
+        }
+      }
+      p.inside = near;
+    }
+  } else if (vault.kind === 'cle'){
+    const kk = vault.key;
+    if (kk && !kk.taken){
+      kk.rot += dt;
+      if (Math.hypot(player.x - kk.x, player.y - kk.y) < player.rad + cell * 0.3){
+        kk.taken = true; hasKey = true; addText(kk.x, kk.y - 20, 'clé !', true); addRing(kk.x, kk.y);
+        burst(kk.x, kk.y, reducedMotion ? 6 : 14, 150, '#FFE0A0', 'spark'); snd('latch', 0.8, 1); snd('coins', 0.5, 1.2, 0.05); buzz(20);
+      }
+    }
+    if (hasKey && dd < cell * 1.25){ hasKey = false; openVault(); }
+  } else if (vault.kind === 'minute'){
+    const p = vault.plates[0], near = Math.hypot(player.x - ctrX(p.cx), player.y - ctrY(p.cy)) < cell * 0.38 && !jump;
+    if (near && !p.inside){
+      vault.timer = MINUTE_TIME; wall[wIdx(vault.dx, vault.dy)] = 0; layerDirty = true; p.lit = true;
+      burst(ctrX(p.cx), ctrY(p.cy), 8, 120, '#7FD6F0', 'spark'); addRing(ctrX(p.cx), ctrY(p.cy)); snd('mclick', 0.6, 1.0); snd('plate', 0.5, 1.2, 0.04);
+      addText(ctrX(p.cx), ctrY(p.cy) - 22, 'cours à la porte !');
+    }
+    p.inside = near;
+    if (vault.timer > 0){
+      vault.tickT = (vault.tickT || 0) - dt;
+      if (vault.tickT <= 0){ snd('tick1', 0.25, 0.9 + (1 - vault.timer / MINUTE_TIME) * 0.8); vault.tickT = 0.15 + vault.timer / MINUTE_TIME * 0.45; }
+      // entrer dans la porte ou dans la chambre la garde ouverte pour de bon : on n'est jamais enfermé
+      const inDoor = cellOfX(player.x) === vault.dx && cellOfY(player.y) === vault.dy;
+      const inRoom = cellOfX(player.x) === vault.cx && cellOfY(player.y) === vault.cy;
+      if (inDoor || inRoom){ vault.timer = 0; openVault(); return; }
+      vault.timer -= dt;
+      if (vault.timer <= 0){ vault.timer = 0; wall[wIdx(vault.dx, vault.dy)] = 1; layerDirty = true; p.lit = false; snd('door4', 0.5, 0.9); puff(dxp, dyp, 2, '#7A7060', true); }
+    }
+  }
+}
+function drawPuzzle(){
+  if (!vault) return;
+  const x0 = originX + vault.dx * cell, y0 = originY + vault.dy * cell, mx = x0 + cell / 2, my = y0 + cell / 2;
+  const vx = ctrX(vault.cx), vy = ctrY(vault.cy), pu = 0.5 + 0.5 * Math.sin(tnow * 3);
+  // la chambre : une lueur d'or sur le sol
+  const gl = ctx.createRadialGradient(vx, vy, 0, vx, vy, cell * 1.4);
+  gl.addColorStop(0, 'rgba(255,214,128,' + (0.3 + 0.12 * pu).toFixed(3) + ')'); gl.addColorStop(1, 'rgba(255,214,128,0)');
+  ctx.fillStyle = gl; ctx.beginPath(); ctx.arc(vx, vy, cell * 1.4, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = 'rgba(255,214,128,0.55)'; ctx.lineWidth = 1.5; ctx.strokeRect(vx - cell * 0.48, vy - cell * 0.48, cell * 0.96, cell * 0.96);
+  // les plaques et la clé, au sol
+  for (const p of vault.plates){
+    const x = ctrX(p.cx), y = ctrY(p.cy), c = PLATE_COL[p.col] || '#7FD6F0', r = cell * 0.3;
+    ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.beginPath(); ctx.ellipse(x, y + r * 0.2, r * 1.05, r * 0.8, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fillStyle = p.lit ? c : 'rgba(22,30,26,0.9)'; ctx.fill();
+    ctx.lineWidth = 2.4; ctx.strokeStyle = c; ctx.stroke();
+    ctx.beginPath(); ctx.arc(x, y, r * 0.45, 0, Math.PI * 2); ctx.fillStyle = p.lit ? '#FFF6DC' : c; ctx.globalAlpha = p.lit ? 0.95 : 0.55; ctx.fill(); ctx.globalAlpha = 1;
+    if (p.lit){ const g2 = ctx.createRadialGradient(x, y, 0, x, y, cell * 0.9); g2.addColorStop(0, c + '99'); g2.addColorStop(1, c + '00'); ctx.fillStyle = g2; ctx.beginPath(); ctx.arc(x, y, cell * 0.9, 0, Math.PI * 2); ctx.fill(); }
+  }
+  if (vault.key && !vault.key.taken){
+    const k = vault.key, bob = Math.sin(tnow * 3) * 2, s = cell * 0.3;
+    const g2 = ctx.createRadialGradient(k.x, k.y, 0, k.x, k.y, cell * 1.0); g2.addColorStop(0, 'rgba(255,224,160,0.4)'); g2.addColorStop(1, 'rgba(255,224,160,0)');
+    ctx.fillStyle = g2; ctx.beginPath(); ctx.arc(k.x, k.y, cell * 1.0, 0, Math.PI * 2); ctx.fill();
+    ctx.save(); ctx.translate(k.x, k.y + bob); drawKeyIcon(s); ctx.restore();
+  }
+  // la porte : un sceau doré tant qu'elle est fermée, avec l'énigme dessus
+  if (!vault.open){
+    const closed = wall[wIdx(vault.dx, vault.dy)] === 1;
+    if (closed){
+      ctx.fillStyle = 'rgba(40,28,10,0.55)'; ctx.fillRect(x0, y0, cell, cell);
+      ctx.strokeStyle = 'rgba(255,214,128,' + (0.7 + 0.3 * pu).toFixed(3) + ')'; ctx.lineWidth = 2; ctx.strokeRect(x0 + 1.5, y0 + 1.5, cell - 3, cell - 3);
+    }
+    if (vault.kind === 'sequence'){
+      for (let k = 0; k < 3; k++){
+        const px = mx + (k - 1) * cell * 0.3, py = my, done = k < vault.step, c = PLATE_COL[vault.order[k]];
+        ctx.beginPath(); ctx.arc(px, py, cell * 0.11, 0, Math.PI * 2); ctx.fillStyle = c; ctx.fill();
+        ctx.lineWidth = done ? 2 : 1; ctx.strokeStyle = done ? '#FFF6DC' : 'rgba(20,12,6,0.8)'; ctx.stroke();
+      }
+    } else if (vault.kind === 'cle'){
+      ctx.save(); ctx.translate(mx, my); ctx.globalAlpha = hasKey ? 1 : 0.8; ctx.beginPath(); ctx.arc(0, -cell * 0.06, cell * 0.1, 0, Math.PI * 2); ctx.fillStyle = '#FFD680'; ctx.fill();
+      ctx.fillRect(-cell * 0.03, cell * 0.02, cell * 0.06, cell * 0.16); ctx.restore();
+    } else if (vault.kind === 'minute'){
+      ctx.beginPath(); ctx.arc(mx, my, cell * 0.22, 0, Math.PI * 2); ctx.strokeStyle = 'rgba(127,214,240,0.35)'; ctx.lineWidth = 2; ctx.stroke();
+      if (vault.timer > 0){ ctx.beginPath(); ctx.arc(mx, my, cell * 0.22, -Math.PI / 2, -Math.PI / 2 + vault.timer / MINUTE_TIME * Math.PI * 2); ctx.strokeStyle = '#7FD6F0'; ctx.lineWidth = 3.4; ctx.stroke(); }
+    }
+  }
+}
+function drawKeyIcon(s){
+  ctx.fillStyle = '#FFD680'; ctx.strokeStyle = 'rgba(70,40,10,0.9)'; ctx.lineWidth = 1.2; ctx.lineJoin = 'round';
+  ctx.beginPath(); ctx.arc(-s * 0.55, 0, s * 0.45, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  ctx.beginPath(); ctx.arc(-s * 0.55, 0, s * 0.16, 0, Math.PI * 2); ctx.fillStyle = 'rgba(20,12,6,0.85)'; ctx.fill();
+  ctx.fillStyle = '#FFD680'; ctx.fillRect(-s * 0.1, -s * 0.12, s * 1.15, s * 0.24); ctx.strokeRect(-s * 0.1, -s * 0.12, s * 1.15, s * 0.24);
+  ctx.fillRect(s * 0.75, s * 0.12, s * 0.16, s * 0.3); ctx.fillRect(s * 0.5, s * 0.12, s * 0.16, s * 0.22);
+}
 function spawnTreasure(){
   const pr = playerRoom();
   const d = roomDistances(pr[0], pr[1]);
@@ -1007,12 +1163,13 @@ function showBanner(title, sub){
 function collectTreasure(t){
   combo = comboTimer > 0 ? combo + 1 : 1;
   comboTimer = comboWin();
-  const pts = TREASURE_PTS * (t.big ? BIG_MULT : (t.kind === 'vag' ? VAG_MULT : 1)) * combo;
+  const pts = TREASURE_PTS * (t.kind === 'joyau' ? JOYAU_MULT : (t.big ? BIG_MULT : (t.kind === 'vag' ? VAG_MULT : 1))) * combo;
   const tc = 'rgb(' + tskin().glow.join(',') + ')';
   score += pts;
   collected++;
   if (combo > stat.bestCombo) stat.bestCombo = combo;
   if (t.big) stat.relics++;
+  if (t.kind === 'joyau'){ stat.joyau++; stageGot += 2; addText(t.x, t.y - 34, 'joyau !', true); }
   if (t.kind === 'vag'){ stat.vag++; addText(t.x, t.y - 34, 'vagabond !', true); }
   if (t.grp){ t.grp.left--; if (t.grp.left <= 0){ stat.filon++; addText(t.x, t.y - 34, 'filon !', true); } }
   addText(t.x, t.y - 14, '+' + pts, t.big || combo >= 3 || t.kind === 'vag');
@@ -1072,6 +1229,7 @@ function nextStage(){
   setStage(stageIdx);
   newMaze();
   treasures = []; particles = []; rings = []; texts = [];
+  setupVault();
   pick = null; hasPick = false; pickT = PICK_FIRST; pickTime = 0; digT = 0; swing = null;
   bonus = null; bonusT = BONUS_FIRST * 0.6; bonusBag = []; lastBonus = null;
   for (const k in fx){ fx[k] = 0; fxTickT[k] = 0; }
@@ -1302,6 +1460,7 @@ function tryJump(dx, dy){
     if (!ux && !uy) continue;
     const wx = pcx + ux, wy = pcy + uy, lx = pcx + 2 * ux, ly = pcy + 2 * uy;
     if (openCell(wx, wy) || !openCell(lx, ly)) continue;
+    if (vaultAdj(wx, wy) || (vaultPick && lx === 2 * vaultPick.i + 1 && ly === 2 * vaultPick.j + 1)) continue;
     if (tele && tele.cClose.some((c) => c.x === lx && c.y === ly)) continue;
     jump = { x0: player.x, y0: player.y, x1: ctrX(lx), y1: ctrY(ly), t: 0, dur: JUMP_DUR };
     player.fx = ux; player.fy = uy;
@@ -1428,6 +1587,7 @@ function spawnPick(){
   playPickSpawn();
 }
 function isBreakable(cx, cy){
+  if (vaultAdj(cx, cy)) return false;                      // la chambre forte : ni pioche ni bond
   if (cx <= 0 || cy <= 0 || cx >= gw - 1 || cy >= gh - 1) return false;  // enceinte
   if (!wall[wIdx(cx, cy)]) return false;
   return (cx + cy) % 2 === 1;   // connecteur, jamais un pilier
@@ -1731,12 +1891,13 @@ function startGame(){
   setStage(0);
   newMaze();
   treasures = []; particles = []; rings = []; texts = [];
+  setupVault();
   score = 0; displayedScore = -1; combo = 0; comboTimer = 0;
   collected = 0; elapsed = 0; shake = 0; flash = 0;
   recordBeaten = false;
   swing = null; attackCd = 0; boons = {}; helmetExtra = 0; renderBoonHud(); ui.boons.classList.add('hidden');
   stageIdx = 0; stageGot = 0; stageT = 0; exitP = null; jump = null; bondN = 0; grace = 0; deathCause = 'pierre'; lastGoal = ''; helmet = true; invuln = 0;
-  stat = { near: 0, bestCombo: 0, relics: 0, bonus: 0, squashed: 0, filon: 0, vag: 0 };
+  stat = { near: 0, bestCombo: 0, relics: 0, bonus: 0, squashed: 0, filon: 0, vag: 0, joyau: 0 };
   bonus = null; bonusT = BONUS_FIRST; bonusBag = []; lastBonus = null;
   for (const k in fx){ fx[k] = 0; fxTickT[k] = 0; }
   ui.banner.classList.remove('go');
@@ -1800,7 +1961,7 @@ async function endGame(){
     (stat.relics ? ' dont <b>' + stat.relics + '</b> relique' + (stat.relics > 1 ? 's' : '') : '') + '<br>' +
     'Meilleur enchaînement <b>×' + stat.bestCombo + '</b> · <b>' + stat.near + '</b> de justesse<br>' +
     'Tenu ' + dur + (stat.bonus ? ' · <b>' + stat.bonus + '</b> bonus' : '') +
-    (stat.filon ? ' · <b>' + stat.filon + '</b> filon' + (stat.filon > 1 ? 's' : '') : '') + (stat.vag ? ' · <b>' + stat.vag + '</b> vagabond' + (stat.vag > 1 ? 's' : '') : '') +
+    (stat.filon ? ' · <b>' + stat.filon + '</b> filon' + (stat.filon > 1 ? 's' : '') : '') + (stat.joyau ? ' · <b>' + stat.joyau + '</b> joyau' + (stat.joyau > 1 ? 'x' : '') : '') + (stat.vag ? ' · <b>' + stat.vag + '</b> vagabond' + (stat.vag > 1 ? 's' : '') : '') +
     (stat.squashed ? ' · <b>' + stat.squashed + '</b> écrasé' + (stat.squashed > 1 ? 's' : '') : '') +
     (Object.keys(boons).length ? '<br>Bonus : ' + Object.keys(boons).map((b) => BOONS[b].nom).join(', ') : '');
   ui.overTitle.textContent = deathCause === 'ennemi' ? 'Les ruines t\u2019ont rattrapé\u2026' : 'La pierre t\u2019a recouvert\u2026';
@@ -2210,6 +2371,7 @@ function update(dt){
     if (grace > 0) grace -= dt;
     if (invuln > 0) invuln -= dt;
     updateEnemies(dt);
+    updateVault(dt);
     if (exitP){
       exitP.t += dt;
       if (state === 'playing' && !jump && Math.hypot(exitP.x - player.x, exitP.y - player.y) < player.rad + cell * 0.35) reachExit();
@@ -2237,7 +2399,7 @@ function update(dt){
       }
       if (t.kind === 'vag') moveVag(t, dt);
       const aimR = fx.aimant > 0 ? AIMANT_RANGE : (boons.poche ? 1.5 : 0);
-      if (aimR > 0 && t.kind !== 'vag'){
+      if (aimR > 0 && t.kind !== 'vag' && t.kind !== 'joyau'){
         const mx = player.x - t.x, my = player.y - t.y, md = Math.hypot(mx, my);
         if (md < cell * aimR && md > 1){
           const st = Math.min(md, cell * AIMANT_PULL * dt);
@@ -2411,6 +2573,24 @@ const BIOMES = [
 let layerC = null, lightC = null, layerDirty = true;
 let mossSpots = [], glowSpots = [], lightSpots = [];
 let fixedE = new Set();
+// ---------- Les chambres fortes (lot 11) : le joyau est derrière une porte scellée qu'on ouvre en comprenant l'énigme ----------
+const PLATE_COL = ['#E8A04C', '#6FBF7A', '#D8643A'];
+let vault = null, vaultPick = null, hasKey = false;
+const vaultHint = {};
+function vaultAdj(cx, cy){ return !!vaultPick && Math.abs(cx - (2 * vaultPick.i + 1)) + Math.abs(cy - (2 * vaultPick.j + 1)) === 1; }
+function pickVaultRoom(){
+  const sr = startRoom(), cand = [];
+  const ok = (i, j) => i >= 0 && j >= 0 && i < Rx && j < Ry && roomMask[rid(i, j)];
+  for (let j = 0; j < Ry; j++) for (let i = 0; i < Rx; i++){
+    if (!roomMask[rid(i, j)] || (i === sr[0] && j === sr[1])) continue;
+    const nb = [[i - 1, j], [i + 1, j], [i, j - 1], [i, j + 1]].filter((n) => ok(n[0], n[1]));
+    if (nb.length >= 2) cand.push({ i, j, nb });
+  }
+  if (!cand.length) return;
+  const c = cand[Math.floor(Math.random() * cand.length)], n = c.nb[Math.floor(Math.random() * c.nb.length)];
+  roomMask[rid(c.i, c.j)] = 0;
+  vaultPick = { i: c.i, j: c.j, ni: n[0], nj: n[1], dx: 2 * c.i + 1 + (n[0] - c.i), dy: 2 * c.j + 1 + (n[1] - c.j) };
+}
 let portals = [], portalLock = -1, boostWas = false, portalCd = 0;
 let special = null;          // terrain par case : 1 lent (sable, ronces), 2 glace, 3 courant
 let currentDir = null, currentCells = [];
@@ -3289,7 +3469,7 @@ function drawTreasure(t){
   let a = 1;
   if (t.life < 1.2) a = (Math.sin(tnow * 18) > 0) ? 1 : 0.25;   // clignote avant de mourir
   const big = t.big, sk = tskin(), gc = sk.glow;
-  const s = cell * (big ? 0.44 : 0.30) * (0.94 + 0.06 * Math.sin(t.rot * 2));
+  const s = cell * (t.kind === 'joyau' ? 0.54 : (big ? 0.44 : 0.30)) * (0.94 + 0.06 * Math.sin(t.rot * 2));
   const bob = Math.sin(t.rot * 0.9) * cell * 0.04;
   // lueur sur le sol
   const gr = s * (big ? 3.4 : 2.7);
@@ -3770,6 +3950,7 @@ function draw(){
   }
 
   drawPortals();
+  drawPuzzle();
 
   // 2) scène vivante
   if (pick){
@@ -3778,6 +3959,7 @@ function draw(){
     ctx.beginPath(); ctx.ellipse(pick.x, pick.y + cell * 0.3, cell * 0.28, cell * 0.09, 0, 0, Math.PI * 2); ctx.fill();
   }
   if (state === 'playing' || state === 'paused' || state === 'choice') drawExplorer();
+  if (hasKey && state === 'playing'){ ctx.save(); ctx.translate(player.x, player.y - cell * 1.05 + Math.sin(tnow * 4) * 1.5); drawKeyIcon(cell * 0.3); ctx.restore(); }
 
   // cailloux et poussière
   for (const p of particles){
