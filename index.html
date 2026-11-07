@@ -71,6 +71,16 @@
   #comboBar.on{opacity:1}
   #comboBar i{display:block;height:100%;background:var(--copper-light);transform-origin:left center;transform:scaleX(0)}
 
+  #fx{display:flex;gap:6px;justify-content:center;margin-top:8px}
+  .chip{
+    position:relative;overflow:hidden;display:none;
+    font-family:'Cinzel',Georgia,serif;font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;
+    padding:3px 9px 6px;border:1px solid var(--c);border-radius:10px;color:var(--c);
+    background:rgba(14,22,17,.65);
+  }
+  .chip.on{display:block}
+  .chip i{position:absolute;left:0;bottom:0;width:100%;height:2px;background:var(--c);transform-origin:left center}
+
   /* ---------- Bannière de profondeur ---------- */
   #banner{
     position:fixed;left:0;right:0;top:34%;z-index:4;text-align:center;pointer-events:none;
@@ -213,6 +223,7 @@
   <div id="score">0</div>
   <div id="combo"></div>
   <div id="comboBar"><i></i></div>
+  <div id="fx"></div>
 </div>
 <div id="banner"></div>
 
@@ -289,6 +300,17 @@ const DIG_HOLD      = 0.15;  // poussée maintenue contre le mur pour creuser (s
 const DEPTH_EVERY   = 8;     // éclats ramassés par profondeur
 const REGION_MAX    = 0.65;  // étendue maximale d'une vague (profondeurs avancées)
 const NEAR_PTS      = 10;    // « de justesse » : points (× combo)
+const BONUS_FIRST   = 14;    // premier bonus (s)
+const BONUS_RESPAWN = 13;    // délai moyen entre bonus (s), après la prise ou la disparition
+const BONUS_LIFE    = 8;     // durée du bonus au sol (s)
+const FOULEE_MULT   = 1.35;  // vitesse pendant la Foulée
+const AIMANT_RANGE  = 3.2;   // portée de l'Aimant (cases)
+const AIMANT_PULL   = 8;     // vitesse à laquelle les éclats glissent vers toi (cases/s)
+const FX_META = {
+  foulee: { nom: 'Foulée',  time: 6, col: [139, 196, 143], aide: 'tu cours plus vite' },
+  aimant: { nom: 'Aimant',  time: 8, col: [232, 205, 140], aide: 'les éclats viennent à toi' },
+  gel:    { nom: 'Sommeil', time: 5, col: [170, 220, 232], aide: 'la pierre dort : pas de vague' },
+};
 const NEAR_RANGE    = 0.12;  // marge (× case) au-delà du rayon : on était dans le passage
 
 const IVORY = '#F0EAD9', COPPER = '#C97B3D', COPPER_LIGHT = '#E8B27D';
@@ -318,6 +340,7 @@ const ui = {
   comboBarBox:document.getElementById('comboBar'),
   banner:     document.getElementById('banner'),
   stats:      document.getElementById('stats'),
+  fx:         document.getElementById('fx'),
 };
 
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -335,13 +358,19 @@ let tnow = 0;                // horloge visuelle (respiration des murs)
 let creakT = 5;              // craquements aléatoires d'ambiance
 let spawnT = 1;
 let depth = 1;               // profondeur : +1 tous les DEPTH_EVERY éclats
-let stat = { near: 0, bestCombo: 0, relics: 0 };
+let stat = { near: 0, bestCombo: 0, relics: 0, bonus: 0 };
 
 const player = { x:0, y:0, tx:0, ty:0, rad:8, walk:0, fx:1, fy:0, blinkT:2, moving:0 };
 let treasures = [], particles = [], rings = [], texts = [], spores = [];
 // la pioche : fenêtre rare de casse illimitée sur les connecteurs fermés
 let pick = null, hasPick = false, pickT = PICK_FIRST, pickTime = 0, digT = 0;
 let massifShown = false, pickHintShown = false;
+// les bonus : un seul au sol à la fois, trois effets qui peuvent se cumuler
+let bonus = null, bonusT = BONUS_FIRST, bonusBag = [], lastBonus = null;
+const fx = { foulee: 0, aimant: 0, gel: 0 };
+const fxTickT = { foulee: 0, aimant: 0, gel: 0 };
+const fxHintShown = {};
+const chips = {};
 let lastStep = 0, pickTickT = 0;   // pas, alerte pioche
 const keys = {};
 
@@ -657,6 +686,79 @@ function collectTreasure(t){
   if (nd > depth) setDepth(nd);
 }
 
+// ---------- Les bonus ----------
+// Un bonus ne peut que rendre le jeu plus facile ou plus rapide : jamais un piège.
+// Le type sort d'un sac mélangé (les trois à tour de rôle, jamais deux fois le même d'affilée).
+function nextBonusType(){
+  if (!bonusBag.length){
+    bonusBag = ['foulee', 'aimant', 'gel'];
+    for (let k = bonusBag.length - 1; k > 0; k--){
+      const m = Math.floor(Math.random() * (k + 1));
+      const t = bonusBag[k]; bonusBag[k] = bonusBag[m]; bonusBag[m] = t;
+    }
+    if (bonusBag[bonusBag.length - 1] === lastBonus){
+      const t = bonusBag[0]; bonusBag[0] = bonusBag[bonusBag.length - 1]; bonusBag[bonusBag.length - 1] = t;
+    }
+  }
+  lastBonus = bonusBag.pop();
+  return lastBonus;
+}
+function spawnBonus(){
+  const pr = playerRoom();
+  const d = roomDistances(pr[0], pr[1]);
+  const far = [], any = [];
+  for (let k = 0; k < d.length; k++){
+    const i = k % Rx, j = (k - i) / Rx;
+    if (i === pr[0] && j === pr[1]) continue;
+    if (pick && pick.i === i && pick.j === j) continue;
+    let taken = false;
+    for (const t of treasures) if (t.i === i && t.j === j){ taken = true; break; }
+    if (taken) continue;
+    any.push(k);
+    if (d[k] >= 5 && d[k] <= 12) far.push(k);
+  }
+  const pool = far.length ? far : any;
+  if (!pool.length){ bonusT = 2; return; }
+  const k = pool[Math.floor(Math.random() * pool.length)];
+  const i = k % Rx, j = (k - i) / Rx;
+  bonus = {
+    i, j, type: nextBonusType(),
+    x: originX + (2*i + 1.5) * cell,
+    y: originY + (2*j + 1.5) * cell,
+    life: BONUS_LIFE, rot: Math.random() * 6,
+  };
+  playBonusSpawn();
+}
+function fxCss(k, a){ const c = FX_META[k].col; return 'rgba(' + c[0] + ',' + c[1] + ',' + c[2] + ',' + a + ')'; }
+function takeBonus(b){
+  const m = FX_META[b.type];
+  fx[b.type] = m.time; fxTickT[b.type] = 0;
+  stat.bonus++;
+  addText(b.x, b.y - 14, m.nom + ' !', true);
+  if (!fxHintShown[b.type]){
+    fxHintShown[b.type] = true;
+    addText(player.x, player.y + 50, m.aide);
+  }
+  addRing(b.x, b.y);
+  burst(b.x, b.y, reducedMotion ? 6 : 16, 170, fxCss(b.type, 1), 'spark');
+  playBonus(b.type);
+  buzz(15);
+}
+function endFx(k){
+  fx[k] = 0;
+  playFxEnd();
+  if (k === 'gel') waveTimer = Math.max(waveTimer, 1.2);   // un souffle avant la prochaine vague
+}
+Object.keys(FX_META).forEach((k) => {
+  const el = document.createElement('span');
+  el.className = 'chip';
+  const c = FX_META[k].col;
+  el.style.setProperty('--c', 'rgb(' + c[0] + ',' + c[1] + ',' + c[2] + ')');
+  el.innerHTML = FX_META[k].nom + '<i></i>';
+  ui.fx.appendChild(el);
+  chips[k] = el;
+});
+
 // ---------- La pioche ----------
 // Rare, une seule charge. Elle ne casse que les CONNECTEURS fermés (jamais
 // les piliers) : le graphe du labyrinthe reste cohérent, et ajouter une
@@ -902,6 +1004,14 @@ function playFade(){ snd('soft', 0.3, 1.2); }
 function playPickSpawn(){ snd('latch', 0.4, 1.3); }
 function playPickLost(){ snd('metalA', 0.55, 0.9); snd('gen', 0.3, 1, 0.05); }
 function playComboEnd(){ snd('tick1', 0.3, 0.75); }
+// bonus : apparition, prise (un son par effet), fin
+function playBonusSpawn(){ snd('up', 0.3, 1.25); }
+function playBonus(t){
+  if (t === 'foulee'){ snd('whoosh', 0.7, 1.3); snd('sw26', 0.5, 1.05, 0.03); snd('click3', 0.4, 1.2, 0.05); }
+  else if (t === 'aimant'){ snd('metalA', 0.7, 1.1); snd('coins', 0.4, 1.1, 0.04); snd('sw9', 0.4, 0.95, 0.02); }
+  else { snd('glass', 0.6, 0.85); snd('down', 0.5, 1, 0.02); snd('latch', 0.5, 0.9, 0.08); }
+}
+function playFxEnd(){ snd('soft', 0.35, 1.1); snd('tick1', 0.3, 0.7, 0.05); }
 // boutons
 function playUi(){ snd('click3', 0.75, 1); }
 
@@ -928,13 +1038,15 @@ function startGame(){
   score = 0; displayedScore = -1; combo = 0; comboTimer = 0;
   collected = 0; elapsed = 0; shake = 0; flash = 0;
   recordBeaten = false;
-  depth = 1; stat = { near: 0, bestCombo: 0, relics: 0 };
+  depth = 1; stat = { near: 0, bestCombo: 0, relics: 0, bonus: 0 };
+  bonus = null; bonusT = BONUS_FIRST; bonusBag = []; lastBonus = null;
+  for (const k in fx){ fx[k] = 0; fxTickT[k] = 0; }
   ui.banner.classList.remove('go');
   ui.score.classList.remove('record');
   const ci = Math.floor(Rx / 2), cj = Math.floor(Ry / 2);
   player.x = player.tx = originX + (2*ci + 1.5) * cell;
   player.y = player.ty = originY + (2*cj + 1.5) * cell;
-  player.fx = 0; player.fy = -1; player.walk = 0; scarf = null;
+  player.fx = 0; player.fy = -1; player.walk = 0;
   waveTimer = 3;
   spawnT = 0.6;
   pick = null; hasPick = false; pickT = PICK_FIRST; pickTime = 0; digT = 0;
@@ -984,7 +1096,7 @@ async function endGame(){
     'Profondeur <b>' + depth + '</b> · <b>' + collected + '</b> éclats' +
     (stat.relics ? ' dont <b>' + stat.relics + '</b> relique' + (stat.relics > 1 ? 's' : '') : '') + '<br>' +
     'Meilleur enchaînement <b>×' + stat.bestCombo + '</b> · <b>' + stat.near + '</b> de justesse<br>' +
-    'Tenu ' + dur;
+    'Tenu ' + dur + (stat.bonus ? ' · <b>' + stat.bonus + '</b> bonus' : '');
   ui.over.classList.remove('hidden');
 }
 
@@ -1175,7 +1287,7 @@ function update(dt){
         }
       }
       if (tele.t <= 0) applyWave();
-    } else {
+    } else if (!(state === 'playing' && fx.gel > 0)){
       waveTimer -= dt;
       if (waveTimer <= 0){
         waveTimer = makeWave() ? waveDelay() : 0.3;
@@ -1230,21 +1342,20 @@ function update(dt){
     let dirx = 0, diry = 0;
     if (dist > 0.5){
       dirx = dx / dist; diry = dy / dist;
-      const step = Math.min(dist, cell * SPEED_CELLS * dt);
+      const step = Math.min(dist, cell * SPEED_CELLS * (fx.foulee > 0 ? FOULEE_MULT : 1) * dt);
       moveAxis(dirx * step, 0, 0);
       moveAxis(0, diry * step, 1);
     }
     const mvx = player.x - px, mvy = player.y - py;
     const mv = Math.hypot(mvx, mvy);
     // plafonné à 1 : une éjection de collision ne doit jamais aplatir le corps
-    player.moving = Math.min(1, mv / (cell * SPEED_CELLS * dt + 0.0001));
+    player.moving = Math.min(1, mv / (cell * SPEED_CELLS * (fx.foulee > 0 ? FOULEE_MULT : 1) * dt + 0.0001));
     if (mv > 0.1){
       player.walk += mv * 0.3;
       const inv = 1 / mv;
       player.fx += (mvx * inv - player.fx) * Math.min(1, dt * 14);
       player.fy += (mvy * inv - player.fy) * Math.min(1, dt * 14);
     }
-    updateScarf(dt);
     player.blinkT -= dt;
     if (player.blinkT <= -0.12) player.blinkT = 2 + Math.random() * 3;
 
@@ -1286,6 +1397,20 @@ function update(dt){
       if (comboTimer <= 0){ if (combo >= 2) playComboEnd(); combo = 0; }
     }
 
+    // effets des bonus : décompte, avertissement tic-tac sur la dernière seconde et demie, fin
+    for (const k in fx){
+      if (fx[k] <= 0) continue;
+      fx[k] -= dt;
+      if (fx[k] <= 0){ endFx(k); continue; }
+      if (fx[k] < 1.5){
+        fxTickT[k] -= dt;
+        if (fxTickT[k] <= 0){ playPickTick(); fxTickT[k] = 0.07 + (fx[k] / 1.5) * 0.22; }
+      }
+    }
+    if (fx.foulee > 0 && mv > 0.1 && !reducedMotion && Math.random() < dt * 26){
+      puff(player.x - player.fx * player.rad, player.y - player.fy * player.rad * 0.6 + player.rad * 0.5, 1, '#A4CFA8');
+    }
+
     // trésors
     spawnT -= dt;
     if (treasures.length < TREASURE_CAP && spawnT <= 0){
@@ -1305,6 +1430,16 @@ function update(dt){
         playFade();
         treasures.splice(i, 1);
         continue;
+      }
+      if (fx.aimant > 0){
+        const mx = player.x - t.x, my = player.y - t.y, md = Math.hypot(mx, my);
+        if (md < cell * AIMANT_RANGE && md > 1){
+          const st = Math.min(md, cell * AIMANT_PULL * dt);
+          t.x += mx / md * st; t.y += my / md * st;
+          t.i = Math.max(0, Math.min(Rx - 1, Math.round(((t.x - originX) / cell - 1) / 2)));
+          t.j = Math.max(0, Math.min(Ry - 1, Math.round(((t.y - originY) / cell - 1) / 2)));
+          if (!reducedMotion && Math.random() < dt * 22) burst(t.x, t.y, 1, 25, COPPER_LIGHT, 'spark');
+        }
       }
       if (Math.hypot(t.x - player.x, t.y - player.y) < player.rad + cell * 0.26){
         collectTreasure(t);
@@ -1358,6 +1493,26 @@ function update(dt){
     }
   }
 
+  if (state === 'playing'){
+    if (!bonus){
+      bonusT -= dt;
+      if (bonusT <= 0) spawnBonus();
+    } else {
+      bonus.life -= dt;
+      bonus.rot += dt;
+      if (bonus.life <= 0){
+        burst(bonus.x, bonus.y, reducedMotion ? 2 : 4, 50, fxCss(bonus.type, 0.8));
+        playFade();
+        bonus = null;
+        bonusT = BONUS_RESPAWN * (0.8 + Math.random() * 0.5);
+      } else if (Math.hypot(bonus.x - player.x, bonus.y - player.y) < player.rad + cell * 0.3){
+        takeBonus(bonus);
+        bonus = null;
+        bonusT = BONUS_RESPAWN * (0.8 + Math.random() * 0.5);
+      }
+    }
+  }
+
   if (state === 'dying'){
     dyingTimer += dt;
     if (dyingTimer > 1.2) endGame();
@@ -1398,6 +1553,12 @@ function update(dt){
     ui.combo.classList.add('on');
   } else {
     ui.combo.classList.remove('on');
+  }
+  for (const k in chips){
+    if (fx[k] > 0 && state === 'playing'){
+      chips[k].classList.add('on');
+      chips[k].lastChild.style.transform = 'scaleX(' + Math.max(0, fx[k] / FX_META[k].time).toFixed(3) + ')';
+    } else chips[k].classList.remove('on');
   }
   if (comboTimer > 0 && state === 'playing'){
     ui.comboBarBox.classList.add('on');
@@ -1655,106 +1816,79 @@ function rr(g, x, y, w, h, r){
   if (g.roundRect) g.roundRect(x, y, w, h, r); else g.rect(x, y, w, h);
 }
 
-// L'explorateur : une silhouette, pas un dessin. Cape d'ivoire en deux plans (comme les facettes
-// des éclats), queue d'hirondelle, capuche avec une seule fente de cuivre, écharpe fine qui flotte.
-const SCARF_N = 6;
-let scarf = null;
-function updateScarf(dt){
-  const r = player.rad * 1.12, seg = r * 0.4;
-  const ax = player.x - player.fx * r * 0.2, ay = player.y - player.fy * r * 0.2;
-  if (!scarf){
-    scarf = [];
-    for (let i = 0; i < SCARF_N; i++) scarf.push({ x: ax - player.fx * seg * (i + 1), y: ay - player.fy * seg * (i + 1) });
-  }
-  let px = ax, py = ay;
-  const nx = -player.fy, ny = player.fx;
-  const amp = r * (0.06 + 0.2 * player.moving);
-  for (let i = 0; i < SCARF_N; i++){
-    const q = scarf[i];
-    const wave = Math.sin(tnow * (4 + 3 * player.moving) - i * 0.9) * amp * (0.3 + i * 0.2);
-    const tx = ax - player.fx * seg * (i + 1) + nx * wave;
-    const ty = ay - player.fy * seg * (i + 1) + ny * wave;
-    const k = Math.min(1, dt * (15 - i * 1.6));
-    q.x += (tx - q.x) * k; q.y += (ty - q.y) * k;
-    let dx = q.x - px, dy = q.y - py;
-    const d = Math.hypot(dx, dy) || 1;
-    q.x = px + dx / d * seg; q.y = py + dy / d * seg;
-    px = q.x; py = q.y;
-  }
-}
-function drawScarf(){
-  if (!scarf) return;
-  const r = player.rad * 1.12;   // un peu plus grand à l'écran que sa zone de collision
-  const ax = player.x - player.fx * r * 0.2, ay = player.y - player.fy * r * 0.2;
-  const pts = [{ x: ax, y: ay }].concat(scarf);
-  const L = [], Rr = [];
-  for (let i = 0; i < pts.length; i++){
-    const a = pts[Math.max(0, i - 1)], b = pts[Math.min(pts.length - 1, i + 1)];
-    let dx = b.x - a.x, dy = b.y - a.y; const d = Math.hypot(dx, dy) || 1; dx /= d; dy /= d;
-    const t = i / (pts.length - 1);
-    const w = r * 0.15 * (1 - t * 0.85) + 0.3;
-    L.push({ x: pts[i].x - dy * w, y: pts[i].y + dx * w });
-    Rr.push({ x: pts[i].x + dy * w, y: pts[i].y - dx * w });
-  }
-  ctx.beginPath();
-  ctx.moveTo(L[0].x, L[0].y);
-  for (let i = 1; i < L.length; i++) ctx.lineTo(L[i].x, L[i].y);
-  for (let i = Rr.length - 1; i >= 0; i--) ctx.lineTo(Rr[i].x, Rr[i].y);
-  ctx.closePath();
-  ctx.fillStyle = COPPER; ctx.fill();
-  ctx.strokeStyle = 'rgba(60,28,10,0.5)'; ctx.lineWidth = 0.8; ctx.stroke();
-}
-
+// L'explorateur : un mineur vu du dessus, en aplats francs et contour sombre. Casque de cuivre
+// avec une seule lampe, épaules d'ivoire, bras qui balancent, bottes, sac à dos. Aucun visage.
 function drawExplorer(){
   const r = player.rad * 1.12;   // un peu plus grand à l'écran que sa zone de collision
   const ang = Math.atan2(player.fy, player.fx);
   const mv = player.moving;
-  const bob = Math.sin(player.walk * 0.6) * r * 0.05 * mv;
-  const sway = Math.sin(player.walk * 0.6) * r * 0.14 * mv;      // les pointes de la cape battent avec les pas
+  const ph = Math.sin(player.walk * 0.6);
+  const bob = ph * r * 0.04 * mv;
+  const OUT = 'rgba(40,28,18,0.7)';
   // ombre portée
   ctx.fillStyle = 'rgba(0,0,0,0.4)';
   ctx.beginPath();
   ctx.ellipse(player.x + r * 0.1, player.y + r * 0.95, r * 0.9, r * 0.32, 0, 0, Math.PI * 2);
   ctx.fill();
+  // la pioche sur le dos (le bonus), derrière le corps
   if (hasPick){
-    drawPickShape(player.x - player.fx * r * 0.9, player.y - player.fy * r * 0.9 + bob, r * 1.0, ang + 2.4, 1);
+    drawPickShape(player.x - player.fx * r * 0.95, player.y - player.fy * r * 0.95 + bob, r * 1.0, ang + 2.4, 1);
   }
-  drawScarf();
-
   ctx.save();
   ctx.translate(player.x, player.y + bob);
   ctx.rotate(ang);
-  ctx.scale(1 + 0.07 * mv, 1 - 0.05 * mv);
-  ctx.lineJoin = 'round';
-  // points de la cape (face à +x) : pointe de capuche, épaules, pointes de la queue, creux de la queue
-  const F  = [r * 1.0, 0];
-  const S1 = [r * 0.05, -r * 0.92], S2 = [r * 0.05, r * 0.92];
-  const H1 = [-r * 1.2, -r * 0.55 + sway], H2 = [-r * 1.2, r * 0.55 - sway];
-  const N  = [-r * 0.62, 0];
-  const poly = (pts, fill) => {
-    ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]);
-    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
-    ctx.closePath(); ctx.fillStyle = fill; ctx.fill();
-  };
-  // deux plans : le haut reçoit la lumière, le bas est dans l'ombre
-  poly([F, S1, H1, N], '#F4EDD9');
-  poly([F, N, H2, S2], '#BDB093');
-  // col : un troisième plan plus clair sur les épaules
-  poly([F, [r * 0.18, -r * 0.62], [r * 0.18, r * 0.62]], '#FBF7EA');
-  // contour fin
-  ctx.beginPath(); ctx.moveTo(F[0], F[1]); ctx.lineTo(S1[0], S1[1]); ctx.lineTo(H1[0], H1[1]); ctx.lineTo(N[0], N[1]);
-  ctx.lineTo(H2[0], H2[1]); ctx.lineTo(S2[0], S2[1]); ctx.closePath();
-  ctx.strokeStyle = 'rgba(40,30,20,0.6)'; ctx.lineWidth = 1; ctx.stroke();
-  // arête centrale (le pli du dos)
-  ctx.beginPath(); ctx.moveTo(F[0], F[1]); ctx.lineTo(N[0], N[1]);
-  ctx.strokeStyle = 'rgba(40,30,20,0.28)'; ctx.stroke();
-  // la capuche est le plan clair de l'avant ; son ouverture est un losange d'ombre (le langage des éclats),
-  // avec une seule fente de cuivre
-  ctx.beginPath(); ctx.moveTo(r * 0.92, 0); ctx.lineTo(r * 0.52, -r * 0.27); ctx.lineTo(r * 0.34, 0); ctx.lineTo(r * 0.52, r * 0.27); ctx.closePath();
-  ctx.fillStyle = '#131B16'; ctx.fill();
-  const blink = player.blinkT < 0 ? 0.15 : 1;
-  ctx.beginPath(); ctx.moveTo(r * 0.58, -r * 0.13 * blink); ctx.lineTo(r * 0.58, r * 0.13 * blink);
-  ctx.strokeStyle = COPPER_LIGHT; ctx.lineWidth = Math.max(1.3, r * 0.1); ctx.lineCap = 'round'; ctx.stroke();
+  ctx.scale(1 + 0.06 * mv, 1 - 0.04 * mv);
+  ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+  // bottes : une avance, l'autre recule
+  const stepX = ph * r * 0.5 * mv;
+  for (const k of [-1, 1]){
+    ctx.beginPath(); ctx.ellipse(r * 0.28 + stepX * k, k * r * 0.36, r * 0.34, r * 0.19, 0, 0, Math.PI * 2);
+    ctx.fillStyle = '#3A2A20'; ctx.fill(); ctx.strokeStyle = OUT; ctx.lineWidth = 1; ctx.stroke();
+    ctx.fillStyle = 'rgba(255,230,200,0.22)';
+    ctx.beginPath(); ctx.ellipse(r * 0.4 + stepX * k, k * r * 0.36, r * 0.12, r * 0.08, 0, 0, Math.PI * 2); ctx.fill();
+  }
+  // sac à dos : cuir, rabat, couverture roulée
+  rr(ctx, -r * 1.02, -r * 0.5, r * 0.62, r * 1.0, r * 0.18);
+  ctx.fillStyle = '#7B5233'; ctx.fill(); ctx.strokeStyle = OUT; ctx.lineWidth = 1; ctx.stroke();
+  ctx.strokeStyle = 'rgba(40,24,12,0.45)'; ctx.beginPath(); ctx.moveTo(-r * 0.78, -r * 0.46); ctx.lineTo(-r * 0.78, r * 0.46); ctx.stroke();
+  rr(ctx, -r * 1.2, -r * 0.56, r * 0.2, r * 1.12, r * 0.1);
+  ctx.fillStyle = '#B9A57A'; ctx.fill(); ctx.strokeStyle = OUT; ctx.stroke();
+  // bras : balancent à l'opposé des jambes, gants sombres au bout
+  for (const k of [-1, 1]){
+    const ax = r * 0.02 - ph * r * 0.34 * mv * k;
+    ctx.beginPath(); ctx.ellipse(ax, k * r * 0.84, r * 0.36, r * 0.2, 0, 0, Math.PI * 2);
+    ctx.fillStyle = k < 0 ? '#E9E1CB' : '#C4B898'; ctx.fill(); ctx.strokeStyle = OUT; ctx.lineWidth = 1; ctx.stroke();
+    ctx.beginPath(); ctx.arc(ax + r * 0.3, k * r * 0.84, r * 0.12, 0, Math.PI * 2);
+    ctx.fillStyle = '#3A2A20'; ctx.fill();
+  }
+  // épaules et veste : deux plans, comme les facettes des éclats
+  ctx.beginPath(); ctx.ellipse(-r * 0.04, 0, r * 0.56, r * 0.88, 0, 0, Math.PI * 2);
+  ctx.fillStyle = '#C9BD9E'; ctx.fill();
+  ctx.save(); ctx.clip();
+  ctx.fillStyle = '#F3ECD8'; ctx.fillRect(-r, -r, r * 2, r);                 // moitié éclairée
+  ctx.strokeStyle = 'rgba(40,28,18,0.25)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(-r * 0.6, 0); ctx.lineTo(r * 0.5, 0); ctx.stroke();   // couture du dos
+  // bretelles de cuivre
+  ctx.strokeStyle = COPPER; ctx.lineWidth = Math.max(1.4, r * 0.12);
+  ctx.beginPath(); ctx.moveTo(r * 0.3, -r * 0.7); ctx.lineTo(-r * 0.3, -r * 0.12);
+  ctx.moveTo(r * 0.3, r * 0.7); ctx.lineTo(-r * 0.3, r * 0.12); ctx.stroke();
+  ctx.restore();
+  ctx.beginPath(); ctx.ellipse(-r * 0.04, 0, r * 0.56, r * 0.88, 0, 0, Math.PI * 2);
+  ctx.strokeStyle = OUT; ctx.lineWidth = 1; ctx.stroke();
+  // le casque de mineur : bord, dôme de cuivre, arête, nervures, UNE lampe
+  ctx.beginPath(); ctx.ellipse(r * 0.14, 0, r * 0.56, r * 0.5, 0, 0, Math.PI * 2);
+  ctx.fillStyle = '#7C431F'; ctx.fill(); ctx.strokeStyle = OUT; ctx.stroke();
+  ctx.beginPath(); ctx.ellipse(r * 0.08, 0, r * 0.45, r * 0.41, 0, 0, Math.PI * 2);
+  const dg = ctx.createRadialGradient(-r * 0.08, -r * 0.16, 1, r * 0.08, 0, r * 0.52);
+  dg.addColorStop(0, '#F0B27A'); dg.addColorStop(0.55, COPPER); dg.addColorStop(1, '#8E4A22');
+  ctx.fillStyle = dg; ctx.fill(); ctx.strokeStyle = 'rgba(50,24,8,0.6)'; ctx.stroke();
+  ctx.strokeStyle = 'rgba(255,226,186,0.55)'; ctx.lineWidth = Math.max(1, r * 0.08);
+  ctx.beginPath(); ctx.moveTo(-r * 0.3, 0); ctx.lineTo(r * 0.5, 0); ctx.stroke();
+  ctx.strokeStyle = 'rgba(50,24,8,0.28)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(-r * 0.22, -r * 0.22); ctx.lineTo(r * 0.44, -r * 0.18);
+  ctx.moveTo(-r * 0.22, r * 0.22); ctx.lineTo(r * 0.44, r * 0.18); ctx.stroke();
+  rr(ctx, r * 0.5, -r * 0.11, r * 0.24, r * 0.22, r * 0.06);
+  ctx.fillStyle = '#FFF6DC'; ctx.fill(); ctx.strokeStyle = 'rgba(50,24,8,0.7)'; ctx.stroke();
   ctx.restore();
   // anneau acier : arc qui rétrécit = temps de pioche restant
   if (hasPick){
@@ -1766,6 +1900,17 @@ function drawExplorer(){
     ctx.strokeStyle = 'rgba(167,184,189,' + ra.toFixed(3) + ')';
     ctx.lineWidth = 1.8;
     ctx.stroke();
+  }
+  // un anneau coloré par bonus actif, qui se vide avec son temps
+  let ri = 0;
+  for (const k in fx){
+    if (fx[k] <= 0) continue;
+    let ra = 0.85;
+    if (fx[k] < 1.5) ra = (Math.sin(tnow * 14) > 0) ? 0.95 : 0.15;
+    ctx.beginPath();
+    ctx.arc(player.x, player.y, r + 9 + ri * 3.6, -Math.PI / 2, -Math.PI / 2 + Math.max(0, fx[k] / FX_META[k].time) * Math.PI * 2);
+    ctx.strokeStyle = fxCss(k, ra); ctx.lineWidth = 2; ctx.stroke();
+    ri++;
   }
 }
 
@@ -1826,6 +1971,50 @@ function drawTreasure(t){
   ctx.globalAlpha = 1;
 }
 
+// un bonus au sol : un talisman (disque sombre, anneau coloré, graduations qui tournent) et son icône
+function drawBonus(b){
+  let a = 1;
+  if (b.life < 1.5) a = (Math.sin(tnow * 16) > 0) ? 1 : 0.3;
+  const bp = Math.sin(tnow * 3) * 2, sz = cell * 0.36, u = sz * 0.58;
+  const glow = ctx.createRadialGradient(b.x, b.y + bp, 0, b.x, b.y + bp, cell * 1.15);
+  glow.addColorStop(0, fxCss(b.type, (0.34 * a).toFixed(3)));
+  glow.addColorStop(1, fxCss(b.type, 0));
+  ctx.fillStyle = glow;
+  ctx.beginPath(); ctx.arc(b.x, b.y + bp, cell * 1.15, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = 'rgba(0,0,0,' + (0.3 * a).toFixed(3) + ')';
+  ctx.beginPath(); ctx.ellipse(b.x, b.y + sz * 1.25, sz * 0.7, sz * 0.2, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.save();
+  ctx.translate(b.x, b.y + bp);
+  ctx.globalAlpha = a;
+  ctx.beginPath(); ctx.arc(0, 0, sz, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(14,22,17,0.88)'; ctx.fill();
+  ctx.strokeStyle = fxCss(b.type, 0.95); ctx.lineWidth = 1.8; ctx.stroke();
+  ctx.strokeStyle = fxCss(b.type, 0.6); ctx.lineWidth = 1.2; ctx.lineCap = 'round';
+  for (let k = 0; k < 8; k++){
+    const an = tnow * 0.9 + k * Math.PI / 4;
+    ctx.beginPath(); ctx.moveTo(Math.cos(an) * sz * 1.2, Math.sin(an) * sz * 1.2); ctx.lineTo(Math.cos(an) * sz * 1.38, Math.sin(an) * sz * 1.38); ctx.stroke();
+  }
+  ctx.lineJoin = 'round';
+  if (b.type === 'foulee'){                       // deux chevrons : plus vite
+    ctx.strokeStyle = IVORY; ctx.lineWidth = Math.max(1.8, u * 0.32);
+    for (const k of [-0.42, 0.36]){
+      ctx.beginPath(); ctx.moveTo(k * u - u * 0.3, -u * 0.62); ctx.lineTo(k * u + u * 0.3, 0); ctx.lineTo(k * u - u * 0.3, u * 0.62); ctx.stroke();
+    }
+  } else if (b.type === 'aimant'){                // un fer à cheval
+    ctx.strokeStyle = COPPER_LIGHT; ctx.lineWidth = Math.max(2.2, u * 0.38);
+    ctx.beginPath(); ctx.moveTo(-u * 0.6, -u * 0.72); ctx.lineTo(-u * 0.6, -u * 0.05); ctx.arc(0, -u * 0.05, u * 0.6, Math.PI, 0, true); ctx.lineTo(u * 0.6, -u * 0.72); ctx.stroke();
+    ctx.strokeStyle = IVORY; ctx.lineWidth = Math.max(2.2, u * 0.38);
+    ctx.beginPath(); ctx.moveTo(-u * 0.6, -u * 0.72); ctx.lineTo(-u * 0.6, -u * 0.44); ctx.moveTo(u * 0.6, -u * 0.72); ctx.lineTo(u * 0.6, -u * 0.44); ctx.stroke();
+  } else {                                        // un sablier : la pierre dort
+    ctx.strokeStyle = IVORY; ctx.lineWidth = Math.max(1.5, u * 0.28);
+    ctx.beginPath(); ctx.moveTo(-u * 0.55, -u * 0.7); ctx.lineTo(u * 0.55, -u * 0.7); ctx.lineTo(0, 0); ctx.lineTo(u * 0.55, u * 0.7); ctx.lineTo(-u * 0.55, u * 0.7); ctx.lineTo(0, 0); ctx.closePath(); ctx.stroke();
+    ctx.fillStyle = fxCss('gel', 0.9);
+    ctx.beginPath(); ctx.moveTo(-u * 0.36, -u * 0.58); ctx.lineTo(u * 0.36, -u * 0.58); ctx.lineTo(0, -u * 0.14); ctx.closePath(); ctx.fill();
+  }
+  ctx.restore();
+  ctx.globalAlpha = 1;
+}
+
 // un point de lumière : perce l'obscurité ambiante
 function lightHole(lg, x, y, r, a){
   const gr = lg.createRadialGradient(x * LS, y * LS, 0, x * LS, y * LS, r * LS);
@@ -1857,6 +2046,7 @@ function drawLight(){
   lightHole(lg, lx + fx * cell * 2.6, ly + fy * cell * 2.6, cell * 4.8, 0.6);
   for (const t of treasures) lightHole(lg, t.x, t.y, cell * (t.big ? 3.2 : 2.3), t.big ? 0.8 : 0.6);
   if (pick) lightHole(lg, pick.x, pick.y, cell * 2, 0.5);
+  if (bonus) lightHole(lg, bonus.x, bonus.y, cell * 2, 0.55);
   if (tele){
     for (const c of tele.cClose) lightHole(lg, originX + (c.x + 0.5) * cell, originY + (c.y + 0.5) * cell, cell * 1.6, 0.35);
   }
@@ -2025,6 +2215,13 @@ function draw(){
     drawPickShape(pick.x, pick.y + bp - cell * 0.05, cell * 0.34, Math.sin(pick.rot) * 0.3, a);
   }
 
+  if (bonus) drawBonus(bonus);
+  // le Sommeil : un voile glacé sur la pierre
+  if (fx.gel > 0 && state === 'playing'){
+    ctx.fillStyle = fxCss('gel', (0.07 + 0.025 * Math.sin(tnow * 2)).toFixed(3));
+    ctx.fillRect(originX, originY, gw * cell, gh * cell);
+  }
+
   // étincelles (additives)
   ctx.globalCompositeOperation = 'lighter';
   for (const p of particles){
@@ -2126,6 +2323,7 @@ function resize(){
       player.tx = mx(player.tx); player.ty = my(player.ty);
       for (const t of treasures){ t.x = mx(t.x); t.y = my(t.y); }
       if (pick){ pick.x = mx(pick.x); pick.y = my(pick.y); }
+      if (bonus){ bonus.x = mx(bonus.x); bonus.y = my(bonus.y); }
     }
   }
   layerDirty = true;
