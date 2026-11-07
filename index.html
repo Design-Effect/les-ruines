@@ -608,7 +608,7 @@ function spawnTreasure(){
     rot: Math.random() * Math.PI,
   };
   treasures.push(t);
-  if (big){ addRing(t.x, t.y); playBigSpawn(); }
+  if (big){ addRing(t.x, t.y); playBigSpawn(); } else playSpawn();
 }
 function nearMiss(){
   const pts = NEAR_PTS * Math.max(1, combo);
@@ -685,6 +685,7 @@ function spawnPick(){
     life: PICK_LIFE,
     rot: Math.random() * 6,
   };
+  playPickSpawn();
 }
 function isBreakable(cx, cy){
   if (cx <= 0 || cy <= 0 || cx >= gw - 1 || cy >= gh - 1) return false;  // enceinte
@@ -700,8 +701,10 @@ function breakWall(cx, cy){
   layerDirty = true;
   digT = 0;   // pas de consommation : la fenêtre de possession fait foi
   const x = originX + (cx + 0.5) * cell, y = originY + (cy + 0.5) * cell;
-  burst(x, y, reducedMotion ? 5 : 14, 160, '#54655B');
-  burst(x, y, reducedMotion ? 2 : 6, 120, '#8A9B90');
+  burst(x, y, reducedMotion ? 6 : 16, 190, '#5F7367');      // gros éclats de pierre
+  burst(x, y, reducedMotion ? 3 : 10, 130, '#8A9B90');       // éclats clairs
+  burst(x, y, reducedMotion ? 3 : 8, 260, '#FFE9C8', 'spark'); // étincelles de l'impact
+  puff(x, y, reducedMotion ? 2 : 5, '#9FB0A6', true);        // nuage de poussière
   addRing(x, y);
   addText(x, y - 10, 'percé !', true);
   playBreak();
@@ -838,45 +841,69 @@ function snd(name, vol, rate, when){
 }
 const rnd = (a, b) => a + Math.random() * (b - a);
 
-// la pierre se referme : coup sourd, très grave
-function playRumble(){ snd('punch', 0.95, 0.5); snd('soft', 0.55, 0.55, 0.02); }
-// un passage s'effrite
-function playCrumble(){ snd('wood', 0.55, 0.72); snd('soft', 0.28, 1.1, 0.05); }
+const pickOf = (a) => a[Math.floor(Math.random() * a.length)];
+// Rien ne descend sous ~0,85 de vitesse : un haut-parleur de téléphone ne rend pas les graves,
+// un son ralenti à l'extrême y disparaît (c'était le défaut de la première version).
+
+// la pierre se referme : dalle lourde, porte de pierre, roche
+function playRumble(){ snd('plate', 0.95, 0.9); snd('door2', 0.8, 0.95, 0.02); snd('mine0', 0.4, 0.9, 0.05); }
+// un passage s'effrite : roche qui cède, gravillons
+function playCrumble(){ snd(pickOf(['mine2', 'mine4']), 0.6, rnd(0.95, 1.1)); snd('gen', 0.35, rnd(0.9, 1.1), 0.06); }
 // crépitement du télégraphe : accélère vers la fin (prog de 0 à 1)
-function playTick(prog){ snd(Math.random() < 0.5 ? 'tick1' : 'tick2', 0.2, 0.9 + (prog || 0) * 0.7); }
-// éclat de cuivre : verre léger, de plus en plus aigu avec le combo
+function playTick(prog){ snd(Math.random() < 0.5 ? 'tick1' : 'tick2', 0.22, 0.9 + (prog || 0) * 0.7); }
+// éclat de cuivre : pièces qui tintent et métal clair, de plus en plus aigu avec le combo
 function playChime(c){
-  snd('glass', 0.6, Math.min(1.8, 0.95 + 0.075 * (c - 1)));
-  snd('click3', 0.28, 1.1, 0.02);
+  const r = Math.min(1.45, 1 + 0.06 * (c - 1));
+  snd('coins2', 0.95, r);
+  snd(pickOf(['metalA', 'metalB']), 0.55, r * 1.05, 0.015);
+  if (c >= 4) snd('bell', 0.22, r, 0.03);
 }
-// la relique : verre grave + coup + swish
+// la relique : cloche, pièces, métal, swish
 function playRelic(c){
-  snd('glass', 0.75, Math.min(1.5, 0.7 + 0.05 * (c - 1)));
-  snd('punch', 0.38, 1.4, 0.02);
-  snd('up', 0.35, 1.1, 0.06);
+  snd('bell', 0.8, 1);
+  snd('coins', 0.85, 1, 0.03);
+  snd('metalB', 0.6, 0.95, 0.02);
+  snd('up', 0.3, 1.1, 0.08);
 }
-function playBigSpawn(){ snd('up', 0.5, 0.8); }
-function playDeath(){ snd('punch', 1, 0.4); snd('soft', 0.75, 0.5, 0.03); snd('down', 0.5, 0.6, 0.1); }
-function playStart(){ snd('click4', 0.55, 0.8); snd('up', 0.25, 0.7, 0.05); }
-function playRecord(){ snd('sw26', 0.55, 1); snd('up', 0.4, 1.3, 0.08); }
+function playBigSpawn(){ snd('up', 0.5, 0.85); snd('bell', 0.25, 1.1, 0.05); }
+function playDeath(){ snd('plate', 1, 0.85); snd('door4', 0.9, 0.9, 0.03); snd('mine0', 0.6, 0.85, 0.06); snd('down', 0.5, 0.75, 0.12); }
+function playStart(){ snd('click4', 0.6, 0.9); snd('up', 0.3, 0.8, 0.05); }
+function playRecord(){ snd('coins', 0.7, 1.1); snd('sw26', 0.5, 1, 0.05); snd('up', 0.4, 1.3, 0.1); }
 // craquement d'ambiance : la structure vit
-function playCreak(){ snd('wood', 0.2, rnd(0.42, 0.6)); }
+function playCreak(){ snd(pickOf(['creak1', 'creak3']), 0.35, rnd(0.9, 1.1)); }
 // la pioche
-function playPickup(){ snd('sw9', 0.65, 1.1); snd('click3', 0.4, 1.3, 0.03); }
-function playBreak(){ snd('punch', 0.9, 0.8); snd('glass', 0.5, 0.65, 0.01); snd('soft', 0.5, 0.7, 0.03); }
-function playThunk(){ snd('punch', 0.45, 0.6); }
-function playPickTick(){ snd('tick2', 0.38, rnd(1.3, 1.55)); }
-// pas feutrés sur pierre : deux matières en alternance
-let stepAlt = 0;
+function playPickup(){ snd('latch', 0.8, 1); snd('sw9', 0.5, 1.1, 0.02); snd('mclick', 0.5, 1.2, 0.04); }
+// UN BLOC QUI SE DÉTRUIT : l'impact de la pioche sur la pierre, le bloc qui cède,
+// les éclats, puis les gravats qui retombent un à un.
+function playBreak(){
+  snd('mine4', 1, 1);
+  snd('plate', 0.8, 1.05, 0.015);
+  snd('glassH', 0.45, 0.9, 0.02);
+  for (let i = 0; i < 5; i++){
+    snd(pickOf(['gen', 'mine2', 'mine0']), 0.38 * (1 - i * 0.12), rnd(1.0, 1.5), 0.09 + i * 0.07 + Math.random() * 0.05);
+  }
+}
+function playThunk(){ snd('door4', 0.5, 1.15); }
+function playPickTick(){ snd('mclick', 0.5, rnd(1.2, 1.5)); }
+// pas sur dalle : cinq prises de pas sur béton, jamais deux fois la même d'affilée
+let lastStepSnd = -1;
 function playStep(){
-  stepAlt ^= 1;
-  if (stepAlt) snd('soft', 0.17, rnd(0.8, 1.05));
-  else snd('wood', 0.1, rnd(0.55, 0.7));
+  let k; do { k = Math.floor(Math.random() * 5); } while (k === lastStepSnd);
+  lastStepSnd = k;
+  snd('step' + k, 0.55, rnd(0.92, 1.1));
 }
 // de justesse : un air déplacé, un tic
-function playNear(){ snd('whoosh', 0.65, 1.3); snd('tick1', 0.45, 1.5, 0.08); }
+function playNear(){ snd('whoosh', 0.7, 1.25); snd('tick1', 0.45, 1.5, 0.08); }
 // nouvelle profondeur : la pierre descend
-function playDepth(){ snd('whoosh', 0.55, 0.8); snd('punch', 0.55, 0.55, 0.05); snd('up', 0.3, 0.7, 0.15); }
+function playDepth(){ snd('whoosh', 0.6, 0.85); snd('plate', 0.7, 0.9, 0.05); snd('bell', 0.3, 0.9, 0.15); }
+// vie des éclats et de la pioche
+function playSpawn(){ snd('mclick', 0.4, 1.5); }
+function playFade(){ snd('soft', 0.3, 1.2); }
+function playPickSpawn(){ snd('latch', 0.4, 1.3); }
+function playPickLost(){ snd('metalA', 0.55, 0.9); snd('gen', 0.3, 1, 0.05); }
+function playComboEnd(){ snd('tick1', 0.3, 0.75); }
+// boutons
+function playUi(){ snd('click3', 0.75, 1); }
 
 function buzz(p){
   try{ if (navigator.vibrate) navigator.vibrate(p); }catch(e){}
@@ -891,6 +918,7 @@ ui.mute.addEventListener('click', (e) => {
   ui.mute.setAttribute('aria-label', 'Volume : ' + v.name);
   if (!muted) initAudio();
   if (master) master.gain.setTargetAtTime(Math.max(v.v, 0.0001), audioCtx.currentTime, 0.05);
+  playUi();
 });
 
 // ---------- Déroulement ----------
@@ -906,7 +934,7 @@ function startGame(){
   const ci = Math.floor(Rx / 2), cj = Math.floor(Ry / 2);
   player.x = player.tx = originX + (2*ci + 1.5) * cell;
   player.y = player.ty = originY + (2*cj + 1.5) * cell;
-  player.fx = 0; player.fy = -1; player.walk = 0;
+  player.fx = 0; player.fy = -1; player.walk = 0; scarf = null;
   waveTimer = 3;
   spawnT = 0.6;
   pick = null; hasPick = false; pickT = PICK_FIRST; pickTime = 0; digT = 0;
@@ -1000,6 +1028,7 @@ window.addEventListener('pointerdown', (e) => {
   } else if (state === 'paused'){
     ui.pause.classList.add('hidden');
     state = 'playing';
+    playUi();
   } else if (state === 'playing'){
     // le dernier doigt posé prend toujours le contrôle
     grabPointer(e);
@@ -1019,9 +1048,10 @@ window.addEventListener('blur', () => {
   for (const k in keys) keys[k] = false;
   if (state === 'playing'){ player.tx = player.x; player.ty = player.y; }
 });
-ui.replay.addEventListener('click', (e) => { e.stopPropagation(); startGame(); });
+ui.replay.addEventListener('click', (e) => { e.stopPropagation(); playUi(); startGame(); });
 ui.share.addEventListener('click', async (e) => {
   e.stopPropagation();
+  playUi();
   const sc = Math.floor(score);
   const text = 'J\'ai déterré ' + sc + ' points dans Les Ruines. Tu fais mieux ?';
   const confirm = (msg) => {
@@ -1214,6 +1244,7 @@ function update(dt){
       player.fx += (mvx * inv - player.fx) * Math.min(1, dt * 14);
       player.fy += (mvy * inv - player.fy) * Math.min(1, dt * 14);
     }
+    updateScarf(dt);
     player.blinkT -= dt;
     if (player.blinkT <= -0.12) player.blinkT = 2 + Math.random() * 3;
 
@@ -1252,7 +1283,7 @@ function update(dt){
     // combo
     if (comboTimer > 0){
       comboTimer -= dt;
-      if (comboTimer <= 0) combo = 0;
+      if (comboTimer <= 0){ if (combo >= 2) playComboEnd(); combo = 0; }
     }
 
     // trésors
@@ -1271,6 +1302,7 @@ function update(dt){
       }
       if (t.life <= 0){
         burst(t.x, t.y, reducedMotion ? 2 : 5, 50, '#7A6A4A');
+        playFade();
         treasures.splice(i, 1);
         continue;
       }
@@ -1299,7 +1331,7 @@ function update(dt){
         hasPick = false; digT = 0;
         addText(player.x, player.y - 30, 'la pioche se brise…');
         burst(player.x, player.y, reducedMotion ? 3 : 7, 90, '#A7B8BD');
-        playThunk();
+        playPickLost();
         pickT = PICK_RESPAWN * (0.8 + Math.random() * 0.5);
       }
     }
@@ -1308,6 +1340,7 @@ function update(dt){
       pick.rot += dt;
       if (pick.life <= 0){
         burst(pick.x, pick.y, reducedMotion ? 2 : 4, 50, '#8A9B90');
+        playFade();
         pick = null;
         pickT = PICK_RESPAWN * (0.8 + Math.random() * 0.5);
       } else if (Math.hypot(pick.x - player.x, pick.y - player.y) < player.rad + cell * 0.3){
@@ -1622,66 +1655,106 @@ function rr(g, x, y, w, h, r){
   if (g.roundRect) g.roundRect(x, y, w, h, r); else g.rect(x, y, w, h);
 }
 
-function drawExplorer(){
-  const r = player.rad;
-  const ang = Math.atan2(player.fy, player.fx);
-  const bob = Math.sin(player.walk * 0.6) * r * 0.06 * player.moving;
-  // ombre portée
-  ctx.fillStyle = 'rgba(0,0,0,0.38)';
-  ctx.beginPath();
-  ctx.ellipse(player.x + r * 0.1, player.y + r * 0.92, r * 0.88, r * 0.34, 0, 0, Math.PI * 2);
-  ctx.fill();
-  // pieds (trottinement)
-  if (player.moving > 0.1){
-    const sw = Math.sin(player.walk * 0.6) * r * 0.45;
-    const pxp = -Math.sin(ang), pyp = Math.cos(ang);
-    ctx.fillStyle = '#D9CFB4';
-    ctx.beginPath();
-    ctx.arc(player.x + pxp * r * 0.5 - Math.cos(ang) * sw, player.y + pyp * r * 0.5 - Math.sin(ang) * sw + r * 0.6, r * 0.22, 0, Math.PI * 2);
-    ctx.arc(player.x - pxp * r * 0.5 + Math.cos(ang) * sw, player.y - pyp * r * 0.5 + Math.sin(ang) * sw + r * 0.6, r * 0.22, 0, Math.PI * 2);
-    ctx.fill();
+// L'explorateur : une silhouette, pas un dessin. Cape d'ivoire en deux plans (comme les facettes
+// des éclats), queue d'hirondelle, capuche avec une seule fente de cuivre, écharpe fine qui flotte.
+const SCARF_N = 6;
+let scarf = null;
+function updateScarf(dt){
+  const r = player.rad * 1.12, seg = r * 0.4;
+  const ax = player.x - player.fx * r * 0.2, ay = player.y - player.fy * r * 0.2;
+  if (!scarf){
+    scarf = [];
+    for (let i = 0; i < SCARF_N; i++) scarf.push({ x: ax - player.fx * seg * (i + 1), y: ay - player.fy * seg * (i + 1) });
   }
-  // la pioche sur le dos (derrière le corps)
+  let px = ax, py = ay;
+  const nx = -player.fy, ny = player.fx;
+  const amp = r * (0.06 + 0.2 * player.moving);
+  for (let i = 0; i < SCARF_N; i++){
+    const q = scarf[i];
+    const wave = Math.sin(tnow * (4 + 3 * player.moving) - i * 0.9) * amp * (0.3 + i * 0.2);
+    const tx = ax - player.fx * seg * (i + 1) + nx * wave;
+    const ty = ay - player.fy * seg * (i + 1) + ny * wave;
+    const k = Math.min(1, dt * (15 - i * 1.6));
+    q.x += (tx - q.x) * k; q.y += (ty - q.y) * k;
+    let dx = q.x - px, dy = q.y - py;
+    const d = Math.hypot(dx, dy) || 1;
+    q.x = px + dx / d * seg; q.y = py + dy / d * seg;
+    px = q.x; py = q.y;
+  }
+}
+function drawScarf(){
+  if (!scarf) return;
+  const r = player.rad * 1.12;   // un peu plus grand à l'écran que sa zone de collision
+  const ax = player.x - player.fx * r * 0.2, ay = player.y - player.fy * r * 0.2;
+  const pts = [{ x: ax, y: ay }].concat(scarf);
+  const L = [], Rr = [];
+  for (let i = 0; i < pts.length; i++){
+    const a = pts[Math.max(0, i - 1)], b = pts[Math.min(pts.length - 1, i + 1)];
+    let dx = b.x - a.x, dy = b.y - a.y; const d = Math.hypot(dx, dy) || 1; dx /= d; dy /= d;
+    const t = i / (pts.length - 1);
+    const w = r * 0.15 * (1 - t * 0.85) + 0.3;
+    L.push({ x: pts[i].x - dy * w, y: pts[i].y + dx * w });
+    Rr.push({ x: pts[i].x + dy * w, y: pts[i].y - dx * w });
+  }
+  ctx.beginPath();
+  ctx.moveTo(L[0].x, L[0].y);
+  for (let i = 1; i < L.length; i++) ctx.lineTo(L[i].x, L[i].y);
+  for (let i = Rr.length - 1; i >= 0; i--) ctx.lineTo(Rr[i].x, Rr[i].y);
+  ctx.closePath();
+  ctx.fillStyle = COPPER; ctx.fill();
+  ctx.strokeStyle = 'rgba(60,28,10,0.5)'; ctx.lineWidth = 0.8; ctx.stroke();
+}
+
+function drawExplorer(){
+  const r = player.rad * 1.12;   // un peu plus grand à l'écran que sa zone de collision
+  const ang = Math.atan2(player.fy, player.fx);
+  const mv = player.moving;
+  const bob = Math.sin(player.walk * 0.6) * r * 0.05 * mv;
+  const sway = Math.sin(player.walk * 0.6) * r * 0.14 * mv;      // les pointes de la cape battent avec les pas
+  // ombre portée
+  ctx.fillStyle = 'rgba(0,0,0,0.4)';
+  ctx.beginPath();
+  ctx.ellipse(player.x + r * 0.1, player.y + r * 0.95, r * 0.9, r * 0.32, 0, 0, Math.PI * 2);
+  ctx.fill();
   if (hasPick){
     drawPickShape(player.x - player.fx * r * 0.9, player.y - player.fy * r * 0.9 + bob, r * 1.0, ang + 2.4, 1);
   }
+  drawScarf();
+
   ctx.save();
   ctx.translate(player.x, player.y + bob);
   ctx.rotate(ang);
-  ctx.scale(1 + 0.08 * player.moving, 1 - 0.06 * player.moving);
-  // sac à dos
-  rr(ctx, -r * 1.22, -r * 0.5, r * 0.72, r * 1.0, r * 0.25);
-  ctx.fillStyle = '#7B5233'; ctx.fill();
-  ctx.strokeStyle = '#4C2F1B'; ctx.lineWidth = 1; ctx.stroke();
-  ctx.fillStyle = 'rgba(255,220,170,0.25)';
-  rr(ctx, -r * 1.16, -r * 0.44, r * 0.6, r * 0.22, r * 0.1); ctx.fill();
-  // corps : volume éclairé en haut à gauche
-  const core = ctx.createRadialGradient(-r * 0.3, -r * 0.35, 1, 0, 0, r * 1.05);
-  core.addColorStop(0, '#FFFCF0');
-  core.addColorStop(0.55, IVORY);
-  core.addColorStop(1, '#CDBF9F');
-  ctx.fillStyle = core;
-  ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill();
-  ctx.strokeStyle = 'rgba(70,55,35,0.45)'; ctx.lineWidth = 1; ctx.stroke();
-  // bretelle en cuir en travers du corps
-  ctx.save();
-  ctx.beginPath(); ctx.arc(0, 0, r - 0.5, 0, Math.PI * 2); ctx.clip();
-  ctx.strokeStyle = '#7B5233'; ctx.lineWidth = r * 0.2; ctx.lineCap = 'butt';
-  ctx.beginPath(); ctx.moveTo(-r * 0.5, -r * 1.1); ctx.lineTo(r * 0.12, r * 1.1); ctx.stroke();
-  ctx.restore();
-  // lampe frontale : cuivre, avec son point brillant
-  ctx.beginPath(); ctx.arc(r * 0.8, 0, r * 0.24, 0, Math.PI * 2);
-  ctx.fillStyle = COPPER; ctx.fill();
-  ctx.strokeStyle = '#7A4620'; ctx.lineWidth = 1; ctx.stroke();
-  ctx.beginPath(); ctx.arc(r * 0.84, 0, r * 0.11, 0, Math.PI * 2);
-  ctx.fillStyle = '#FFF3D6'; ctx.fill();
-  // yeux tournés vers la direction
+  ctx.scale(1 + 0.07 * mv, 1 - 0.05 * mv);
+  ctx.lineJoin = 'round';
+  // points de la cape (face à +x) : pointe de capuche, épaules, pointes de la queue, creux de la queue
+  const F  = [r * 1.0, 0];
+  const S1 = [r * 0.05, -r * 0.92], S2 = [r * 0.05, r * 0.92];
+  const H1 = [-r * 1.2, -r * 0.55 + sway], H2 = [-r * 1.2, r * 0.55 - sway];
+  const N  = [-r * 0.62, 0];
+  const poly = (pts, fill) => {
+    ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]);
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+    ctx.closePath(); ctx.fillStyle = fill; ctx.fill();
+  };
+  // deux plans : le haut reçoit la lumière, le bas est dans l'ombre
+  poly([F, S1, H1, N], '#F4EDD9');
+  poly([F, N, H2, S2], '#BDB093');
+  // col : un troisième plan plus clair sur les épaules
+  poly([F, [r * 0.18, -r * 0.62], [r * 0.18, r * 0.62]], '#FBF7EA');
+  // contour fin
+  ctx.beginPath(); ctx.moveTo(F[0], F[1]); ctx.lineTo(S1[0], S1[1]); ctx.lineTo(H1[0], H1[1]); ctx.lineTo(N[0], N[1]);
+  ctx.lineTo(H2[0], H2[1]); ctx.lineTo(S2[0], S2[1]); ctx.closePath();
+  ctx.strokeStyle = 'rgba(40,30,20,0.6)'; ctx.lineWidth = 1; ctx.stroke();
+  // arête centrale (le pli du dos)
+  ctx.beginPath(); ctx.moveTo(F[0], F[1]); ctx.lineTo(N[0], N[1]);
+  ctx.strokeStyle = 'rgba(40,30,20,0.28)'; ctx.stroke();
+  // la capuche est le plan clair de l'avant ; son ouverture est un losange d'ombre (le langage des éclats),
+  // avec une seule fente de cuivre
+  ctx.beginPath(); ctx.moveTo(r * 0.92, 0); ctx.lineTo(r * 0.52, -r * 0.27); ctx.lineTo(r * 0.34, 0); ctx.lineTo(r * 0.52, r * 0.27); ctx.closePath();
+  ctx.fillStyle = '#131B16'; ctx.fill();
   const blink = player.blinkT < 0 ? 0.15 : 1;
-  ctx.fillStyle = '#1A241E';
-  ctx.beginPath();
-  ctx.ellipse(r * 0.4, -r * 0.3, r * 0.12, r * 0.12 * blink, 0, 0, Math.PI * 2);
-  ctx.ellipse(r * 0.4,  r * 0.3, r * 0.12, r * 0.12 * blink, 0, 0, Math.PI * 2);
-  ctx.fill();
+  ctx.beginPath(); ctx.moveTo(r * 0.58, -r * 0.13 * blink); ctx.lineTo(r * 0.58, r * 0.13 * blink);
+  ctx.strokeStyle = COPPER_LIGHT; ctx.lineWidth = Math.max(1.3, r * 0.1); ctx.lineCap = 'round'; ctx.stroke();
   ctx.restore();
   // anneau acier : arc qui rétrécit = temps de pioche restant
   if (hasPick){
