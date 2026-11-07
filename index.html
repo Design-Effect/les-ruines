@@ -71,6 +71,7 @@
   #comboBar.on{opacity:1}
   #comboBar i{display:block;height:100%;background:var(--copper-light);transform-origin:left center;transform:scaleX(0)}
 
+  #goal{margin-top:5px;font-family:'Cinzel',Georgia,serif;font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:rgba(240,234,217,.6)}
   #fx{display:flex;gap:6px;justify-content:center;margin-top:8px}
   .chip{
     position:relative;overflow:hidden;display:none;
@@ -223,6 +224,7 @@
   <div id="score">0</div>
   <div id="combo"></div>
   <div id="comboBar"><i></i></div>
+  <div id="goal"></div>
   <div id="fx"></div>
 </div>
 <div id="banner"></div>
@@ -244,7 +246,7 @@
 
 <!-- Écran de fin -->
 <div id="over" class="screen hidden">
-  <h2>La pierre t&rsquo;a recouvert&hellip;</h2>
+  <h2 id="overTitle">La pierre t&rsquo;a recouvert&hellip;</h2>
   <div id="finalScore">0</div>
   <div id="newBest">◆ Nouveau record ◆</div>
   <div id="overBest"></div>
@@ -297,7 +299,23 @@ const PICK_RESPAWN  = 16;    // délai moyen entre pioches (s), après la fin de
 const PICK_LIFE     = 9;     // durée de la pioche au sol (s)
 const PICK_DURATION = 7;     // fenêtre de possession : casse illimitée (s)
 const DIG_HOLD      = 0.15;  // poussée maintenue contre le mur pour creuser (s)
-const DEPTH_EVERY   = 8;     // éclats ramassés par profondeur
+const STAGE_PTS     = 150;   // bonus de passage (× numéro de l'étage)
+const GRACE         = 1.6;   // répit à l'arrivée dans un étage : ennemis figés (s)
+const SCARAB_SPEED  = 2.9;   // cases/s (le joueur : 5,6)
+const GARDE_SPEED   = 2.3;   // gardien en poursuite
+const GARDE_WANDER  = 1.3;   // gardien qui rôde
+const GARDE_SIGHT   = 18;    // distance (en cases de grille) à laquelle le gardien te repère
+const SQUASH_PTS    = 40;    // ennemi écrasé par la pierre (× combo)
+const BOND_JUMPS    = 3;     // sauts par bonus
+const BOND_HOLD     = 0.1;   // poussée maintenue contre le mur avant de bondir (s)
+const JUMP_DUR      = 0.4;   // durée d'un bond (s)
+// les quatre étages : chacun son format, sa teinte, ses ennemis. Après le quatrième, on boucle en montant d'un cran.
+const STAGES = [
+  { nom: 'Les Galeries', biome: 0, cell: 1.00, mask: 'rect',    braid: 0.14, quota: 8,  waveMul: 1.00, scarab: 0, garde: 0 },
+  { nom: 'La Caverne',   biome: 1, cell: 0.82, mask: 'losange', braid: 0.45, quota: 9,  waveMul: 0.95, scarab: 2, garde: 0 },
+  { nom: 'Le Puits',     biome: 2, cell: 0.78, mask: 'croix',   braid: 0.03, quota: 10, waveMul: 0.90, scarab: 2, garde: 1 },
+  { nom: 'La Cendre',    biome: 3, cell: 1.30, mask: 'rect',    braid: 0.10, quota: 10, waveMul: 0.85, scarab: 1, garde: 2 },
+];
 const REGION_MAX    = 0.65;  // étendue maximale d'une vague (profondeurs avancées)
 const NEAR_PTS      = 10;    // « de justesse » : points (× combo)
 const BONUS_FIRST   = 14;    // premier bonus (s)
@@ -309,7 +327,8 @@ const AIMANT_PULL   = 8;     // vitesse à laquelle les éclats glissent vers to
 const FX_META = {
   foulee: { nom: 'Foulée',  time: 6, col: [139, 196, 143], aide: 'tu cours plus vite' },
   aimant: { nom: 'Aimant',  time: 8, col: [232, 205, 140], aide: 'les éclats viennent à toi' },
-  gel:    { nom: 'Sommeil', time: 5, col: [170, 220, 232], aide: 'la pierre dort : pas de vague' },
+  bond:   { nom: 'Bond',    time: 12, col: [170, 220, 232], aide: 'pousse contre un mur : tu sautes par-dessus' },
+  statue: { nom: 'Statue',  time: 6, col: [214, 214, 232], aide: 'les ennemis sont pétrifiés' },
 };
 const NEAR_RANGE    = 0.12;  // marge (× case) au-delà du rayon : on était dans le passage
 
@@ -341,6 +360,8 @@ const ui = {
   banner:     document.getElementById('banner'),
   stats:      document.getElementById('stats'),
   fx:         document.getElementById('fx'),
+  goal:       document.getElementById('goal'),
+  overTitle:  document.getElementById('overTitle'),
 };
 
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -357,8 +378,15 @@ let recordBeaten = false;
 let tnow = 0;                // horloge visuelle (respiration des murs)
 let creakT = 5;              // craquements aléatoires d'ambiance
 let spawnT = 1;
-let depth = 1;               // profondeur : +1 tous les DEPTH_EVERY éclats
-let stat = { near: 0, bestCombo: 0, relics: 0, bonus: 0 };
+let stageIdx = 0;            // l'étage : 0 = Les Galeries
+let stageGot = 0;            // éclats ramassés dans cet étage
+let exitP = null;            // le passage vers l'étage suivant (quand le quota est atteint)
+let transT = 0, transSwitched = false;
+let enemies = [], grace = 0, chaseField = null, chaseT = 0;
+let jump = null, bondN = 0, bondT = 0;
+let roomMask = null;
+let stat = { near: 0, bestCombo: 0, relics: 0, bonus: 0, squashed: 0 };
+let deathCause = 'pierre', bondMsgT = -9, lastGoal = '';
 
 const player = { x:0, y:0, tx:0, ty:0, rad:8, walk:0, fx:1, fy:0, blinkT:2, moving:0 };
 let treasures = [], particles = [], rings = [], texts = [], spores = [];
@@ -367,8 +395,8 @@ let pick = null, hasPick = false, pickT = PICK_FIRST, pickTime = 0, digT = 0;
 let massifShown = false, pickHintShown = false;
 // les bonus : un seul au sol à la fois, trois effets qui peuvent se cumuler
 let bonus = null, bonusT = BONUS_FIRST, bonusBag = [], lastBonus = null;
-const fx = { foulee: 0, aimant: 0, gel: 0 };
-const fxTickT = { foulee: 0, aimant: 0, gel: 0 };
+const fx = { foulee: 0, aimant: 0, bond: 0, statue: 0 };
+const fxTickT = { foulee: 0, aimant: 0, bond: 0, statue: 0 };
 const fxHintShown = {};
 const chips = {};
 let lastStep = 0, pickTickT = 0;   // pas, alerte pioche
@@ -401,10 +429,28 @@ function edgeRooms(e){
 function rid(i, j){ return j * Rx + i; }
 function wIdx(x, y){ return y * gw + x; }
 function forEachEdge(fn){
+  const ok = (i, j) => !roomMask || roomMask[rid(i, j)];
   for (let j = 0; j < Ry; j++) for (let i = 0; i < Rx; i++){
-    if (i < Rx - 1) fn(eH(i, j));
-    if (j < Ry - 1) fn(eV(i, j));
+    if (!ok(i, j)) continue;
+    if (i < Rx - 1 && ok(i + 1, j)) fn(eH(i, j));
+    if (j < Ry - 1 && ok(i, j + 1)) fn(eV(i, j));
   }
+}
+function S(){ return STAGES[stageIdx % STAGES.length]; }
+function tier(){ return Math.floor(stageIdx / STAGES.length); }
+function stageQuota(){ return S().quota + 2 * tier(); }
+// le format : quelles salles existent (le reste est du roc plein)
+function makeMask(kind){
+  const m = new Uint8Array(Rx * Ry).fill(1);
+  if (kind === 'rect') return m;
+  const ci = (Rx - 1) / 2, cj = (Ry - 1) / 2;
+  for (let j = 0; j < Ry; j++) for (let i = 0; i < Rx; i++){
+    let ok = true;
+    if (kind === 'losange') ok = Math.abs(i - ci) / (Rx / 2) + Math.abs(j - cj) / (Ry / 2) <= 1.0;
+    else if (kind === 'croix') ok = Math.abs(i - ci) <= Rx * 0.2 || Math.abs(j - cj) <= Ry * 0.22;
+    m[rid(i, j)] = ok ? 1 : 0;
+  }
+  return m;
 }
 function hash01(x, y){
   const s = Math.sin(x * 127.1 + y * 311.7) * 43758.5453;
@@ -423,41 +469,50 @@ function computeLayout(){
 }
 
 function newMaze(){
-  const tc = Math.min(34, Math.max(22, W / 15));
+  const sd = S();
+  const tc = Math.max(19, Math.min(34, Math.max(22, W / 15)) * sd.cell);
   Rx = Math.max(5, Math.min(12, Math.floor(((W - 16) / tc - 1) / 2)));
   Ry = Math.max(6, Math.min(18, Math.floor(((H - 94 - ctrlH()) / tc - 1) / 2)));
   gw = 2 * Rx + 1; gh = 2 * Ry + 1;
-  openE = new Set();
   tele = null;
-
-  // génération : remonte-arrière itératif → labyrinthe parfait (connecté)
-  const seen = new Uint8Array(Rx * Ry);
-  const start = [Math.floor(Rx / 2), Math.floor(Ry / 2)];
-  seen[rid(start[0], start[1])] = 1;
-  const stack = [start];
-  while (stack.length){
-    const top = stack[stack.length - 1];
-    const i = top[0], j = top[1];
-    const nb = [];
-    if (i > 0      && !seen[rid(i-1, j)]) nb.push([i-1, j, eH(i-1, j)]);
-    if (i < Rx - 1 && !seen[rid(i+1, j)]) nb.push([i+1, j, eH(i, j)]);
-    if (j > 0      && !seen[rid(i, j-1)]) nb.push([i, j-1, eV(i, j-1)]);
-    if (j < Ry - 1 && !seen[rid(i, j+1)]) nb.push([i, j+1, eV(i, j)]);
-    if (!nb.length){ stack.pop(); continue; }
-    const n = nb[Math.floor(Math.random() * nb.length)];
-    seen[rid(n[0], n[1])] = 1;
-    openE.add(n[2]);
-    stack.push([n[0], n[1]]);
+  let kind = sd.mask;
+  for (;;){
+    roomMask = makeMask(kind);
+    openE = new Set();
+    // génération : remonte-arrière itératif → labyrinthe parfait (connecté) dans le format
+    const seen = new Uint8Array(Rx * Ry);
+    let valid = 0;
+    for (let k = 0; k < seen.length; k++){ if (!roomMask[k]) seen[k] = 1; else valid++; }
+    const start = [Math.floor(Rx / 2), Math.floor(Ry / 2)];
+    seen[rid(start[0], start[1])] = 1;
+    let visited = 1;
+    const stack = [start];
+    while (stack.length){
+      const top = stack[stack.length - 1];
+      const i = top[0], j = top[1];
+      const nb = [];
+      if (i > 0      && !seen[rid(i-1, j)]) nb.push([i-1, j, eH(i-1, j)]);
+      if (i < Rx - 1 && !seen[rid(i+1, j)]) nb.push([i+1, j, eH(i, j)]);
+      if (j > 0      && !seen[rid(i, j-1)]) nb.push([i, j-1, eV(i, j-1)]);
+      if (j < Ry - 1 && !seen[rid(i, j+1)]) nb.push([i, j+1, eV(i, j)]);
+      if (!nb.length){ stack.pop(); continue; }
+      const n = nb[Math.floor(Math.random() * nb.length)];
+      seen[rid(n[0], n[1])] = 1; visited++;
+      openE.add(n[2]);
+      stack.push([n[0], n[1]]);
+    }
+    if (visited === valid || kind === 'rect') break;
+    kind = 'rect';   // un format qui ne se relie pas : on retombe sur le rectangle
   }
-  // tressage : des boucles, pas d'impasses piégeuses
-  forEachEdge((e) => { if (!openE.has(e) && Math.random() < BRAID) openE.add(e); });
+  // tressage : des boucles (beaucoup dans une caverne, presque aucune dans un puits)
+  forEachEdge((e) => { if (!openE.has(e) && Math.random() < sd.braid) openE.add(e); });
   buildWalls();
   computeLayout();
 }
 
 function buildWalls(){
   wall = new Uint8Array(gw * gh).fill(1);
-  for (let j = 0; j < Ry; j++) for (let i = 0; i < Rx; i++) wall[wIdx(2*i+1, 2*j+1)] = 0;
+  for (let j = 0; j < Ry; j++) for (let i = 0; i < Rx; i++) if (roomMask[rid(i, j)]) wall[wIdx(2*i+1, 2*j+1)] = 0;
   openE.forEach((e) => { const c = edgeCell(e); wall[wIdx(c.x, c.y)] = 0; });
 }
 
@@ -470,11 +525,11 @@ function teleDur(){
 }
 function waveDelay(){
   if (state !== 'playing') return 4.5;
-  return Math.max(WAVE_MIN, WAVE_START - elapsed * 0.022 - collected * 0.045);
+  return Math.max(WAVE_MIN, WAVE_START - elapsed * 0.022 - collected * 0.045) * S().waveMul;
 }
 
 function makeWave(){
-  const reg = Math.min(REGION_MAX, REGION + (depth - 1) * 0.025);
+  const reg = Math.min(REGION_MAX, REGION + stageIdx * 0.025);
   const rw = Math.max(2, Math.round(Rx * reg));
   const rh = Math.max(2, Math.round(Ry * reg));
   const x0 = Math.floor(Math.random() * (Rx - rw + 1));
@@ -561,16 +616,23 @@ function applyWave(){
       const dist = Math.hypot(dx, dy);
       minD = Math.min(minD, Math.hypot(player.x - (L + cell/2), player.y - (T + cell/2)));
       const inside = player.x > L && player.x < L + cell && player.y > T && player.y < T + cell;
-      if (inside){ die(); return; }
+      if (inside && !jump){ die(); return; }
       // de justesse : on était dans le passage (ou à un souffle) quand il s'est fermé
-      if (dist < player.rad + cell * NEAR_RANGE) near = true;
-      if (dist < player.rad){
+      if (dist < player.rad + cell * NEAR_RANGE && !jump) near = true;
+      if (dist < player.rad && !jump){
         // frôlé de peu : la pierre repousse l'explorateur
         const f = (player.rad - dist + 1) / (dist || 1);
         player.x += dx * f; player.y += dy * f;
         player.tx = player.x; player.ty = player.y;
       }
     }
+  }
+  // la pierre qui se referme écrase les ennemis pris dedans ; ceux dont la cible vient de se murer font demi-tour
+  for (const e of enemies){
+    if (!e.alive) continue;
+    const ecx = Math.max(0, Math.min(gw - 1, cellOfX(e.x))), ecy = Math.max(0, Math.min(gh - 1, cellOfY(e.y)));
+    if (wall[wIdx(ecx, ecy)]) squashEnemy(e);
+    else if (!openCell(e.tx, e.ty)){ e.tx = e.cx; e.ty = e.cy; }
   }
   if (w.cClose.length){
     playRumble();
@@ -617,7 +679,7 @@ function spawnTreasure(){
   const far = [], any = [];
   for (let k = 0; k < d.length; k++){
     const i = k % Rx, j = (k - i) / Rx;
-    if (i === pr[0] && j === pr[1]) continue;
+    if (d[k] < 0 || (i === pr[0] && j === pr[1])) continue;
     if (pick && pick.i === i && pick.j === j) continue;
     let taken = false;
     for (const t of treasures) if (t.i === i && t.j === j){ taken = true; break; }
@@ -647,18 +709,11 @@ function nearMiss(){
   playNear();
   buzz(20);
 }
-function setDepth(d){
-  depth = d;
-  layerDirty = true;
-  if (d > 1){
-    ui.banner.innerHTML = 'PROFONDEUR ' + d + '<small>la pierre se resserre</small>';
-    ui.banner.classList.remove('go');
-    void ui.banner.offsetWidth;        // relance l'animation
-    ui.banner.classList.add('go');
-    playDepth();
-    buzz(30);
-    if (!reducedMotion) shake = Math.max(shake, 4);
-  }
+function showBanner(title, sub){
+  ui.banner.innerHTML = title + '<small>' + sub + '</small>';
+  ui.banner.classList.remove('go');
+  void ui.banner.offsetWidth;        // relance l'animation
+  ui.banner.classList.add('go');
 }
 function collectTreasure(t){
   combo = comboTimer > 0 ? combo + 1 : 1;
@@ -682,8 +737,220 @@ function collectTreasure(t){
     playChime(combo);
     buzz(15);
   }
-  const nd = 1 + Math.floor(collected / DEPTH_EVERY);
-  if (nd > depth) setDepth(nd);
+  stageGot++;
+  if (!exitP && stageGot >= stageQuota()) openExit();
+}
+
+// ---------- Les étages : le passage ----------
+function ctrX(cx){ return originX + (cx + 0.5) * cell; }
+function ctrY(cy){ return originY + (cy + 0.5) * cell; }
+function cellOfX(x){ return Math.floor((x - originX) / cell); }
+function cellOfY(y){ return Math.floor((y - originY) / cell); }
+function openCell(cx, cy){ return cx >= 0 && cy >= 0 && cx < gw && cy < gh && !wall[wIdx(cx, cy)]; }
+
+// le quota atteint, un escalier s'ouvre dans la salle la plus lointaine
+function openExit(){
+  const pr = playerRoom();
+  const d = roomDistances(pr[0], pr[1]);
+  let bk = -1, bd = -1;
+  for (let k = 0; k < d.length; k++) if (d[k] > bd){ bd = d[k]; bk = k; }
+  if (bk < 0) return;
+  const i = bk % Rx, j = (bk - i) / Rx;
+  exitP = { i, j, x: originX + (2*i + 1.5) * cell, y: originY + (2*j + 1.5) * cell, t: 0 };
+  showBanner('PASSAGE OUVERT', 'descends');
+  puff(exitP.x, exitP.y, reducedMotion ? 2 : 6, '#E8D9B0', true);
+  addRing(exitP.x, exitP.y);
+  playExitOpen(); buzz(30);
+  if (!reducedMotion) shake = Math.max(shake, 4);
+}
+function startTransition(){
+  state = 'transition'; transT = 0; transSwitched = false;
+  const pts = STAGE_PTS * (stageIdx + 1);
+  score += pts;
+  addText(exitP.x, exitP.y - 20, 'étage franchi +' + pts, true);
+  addRing(exitP.x, exitP.y);
+  burst(exitP.x, exitP.y, reducedMotion ? 8 : 24, 200, '#FFE9C8', 'spark');
+  for (const k in fx) fx[k] = 0;
+  jump = null;
+  playDescent(); buzz(40);
+}
+function nextStage(){
+  stageIdx++;
+  newMaze();
+  treasures = []; particles = []; rings = []; texts = [];
+  pick = null; hasPick = false; pickT = PICK_FIRST; pickTime = 0; digT = 0;
+  bonus = null; bonusT = BONUS_FIRST * 0.6; bonusBag = []; lastBonus = null;
+  for (const k in fx){ fx[k] = 0; fxTickT[k] = 0; }
+  exitP = null; stageGot = 0; jump = null; bondN = 0;
+  combo = 0; comboTimer = 0;
+  const ci = Math.floor(Rx / 2), cj = Math.floor(Ry / 2);
+  player.x = player.tx = originX + (2*ci + 1.5) * cell;
+  player.y = player.ty = originY + (2*cj + 1.5) * cell;
+  player.fx = 0; player.fy = -1;
+  waveTimer = 3; spawnT = 0.6;
+  layerDirty = true;
+  spawnEnemies();
+  grace = GRACE;
+  const nom = S().nom + (tier() ? ' \u00b7 niveau ' + (tier() + 1) : '');
+  showBanner('ÉTAGE ' + (stageIdx + 1), nom);
+}
+
+// ---------- Les ennemis ----------
+// Toujours visibles (lueur d'argile), toujours plus lents que toi, jamais cachés derrière un tirage.
+// Le scarabée longe les murs (règle de la main droite : sa route se lit) ; le gardien rôde puis te poursuit.
+const DIRS = [[1, 0], [0, 1], [-1, 0], [0, -1]];
+function enemyRad(e){ return cell * (e.kind === 'garde' ? 0.28 : 0.2); }
+function makeEnemy(kind, k){
+  const i = k % Rx, j = (k - i) / Rx;
+  const cx = 2 * i + 1, cy = 2 * j + 1;
+  return { kind, cx, cy, tx: cx, ty: cy, x: ctrX(cx), y: ctrY(cy), h: Math.floor(Math.random() * 4), ang: 0,
+           alive: true, respawn: 0, legT: Math.random() * 6, chasing: false, stepT: Math.random() * 0.3 };
+}
+function farRooms(minD){
+  const pr = playerRoom();
+  const d = roomDistances(pr[0], pr[1]);
+  let pool = [];
+  for (let k = 0; k < d.length; k++) if (d[k] >= minD) pool.push(k);
+  if (!pool.length) for (let k = 0; k < d.length; k++) if (d[k] >= 3) pool.push(k);
+  for (let k = pool.length - 1; k > 0; k--){ const m = Math.floor(Math.random() * (k + 1)); const t = pool[k]; pool[k] = pool[m]; pool[m] = t; }
+  return pool;
+}
+function spawnEnemies(){
+  enemies = [];
+  const sd = S(), t = tier();
+  const nS = sd.scarab + t, nG = sd.garde + (t >= 2 ? 1 : 0);
+  const pool = farRooms(6);
+  let n = 0;
+  for (let k = 0; k < nS && n < pool.length; k++) enemies.push(makeEnemy('scarab', pool[n++]));
+  for (let k = 0; k < nG && n < pool.length; k++) enemies.push(makeEnemy('garde', pool[n++]));
+}
+function respawnEnemy(e){
+  const pool = farRooms(7);
+  if (!pool.length){ e.respawn = 2; return; }
+  const ne = makeEnemy(e.kind, pool[0]);
+  Object.assign(e, ne);
+  puff(e.x, e.y, 2, '#6A625A');
+}
+function buildChaseField(){
+  if (!chaseField || chaseField.length !== gw * gh) chaseField = new Int16Array(gw * gh);
+  chaseField.fill(-1);
+  const pcx = cellOfX(player.x), pcy = cellOfY(player.y);
+  if (!openCell(pcx, pcy)) return;
+  const q = [wIdx(pcx, pcy)];
+  chaseField[q[0]] = 0;
+  let h = 0;
+  while (h < q.length){
+    const cur = q[h++];
+    const cx = cur % gw, cy = (cur - cx) / gw;
+    for (let k = 0; k < 4; k++){
+      const nx = cx + DIRS[k][0], ny = cy + DIRS[k][1];
+      if (!openCell(nx, ny)) continue;
+      const ni = wIdx(nx, ny);
+      if (chaseField[ni] >= 0) continue;
+      chaseField[ni] = chaseField[cur] + 1;
+      q.push(ni);
+    }
+  }
+}
+function chooseNext(e){
+  let dir = -1;
+  if (e.kind === 'garde' && chaseField){
+    const here = chaseField[wIdx(e.cx, e.cy)];
+    if (here >= 0 && here <= (e.chasing ? GARDE_SIGHT + 6 : GARDE_SIGHT)){
+      if (!e.chasing){ e.chasing = true; playAlert(); addRing(e.x, e.y); }
+      let best = here;
+      for (let k = 0; k < 4; k++){
+        const nx = e.cx + DIRS[k][0], ny = e.cy + DIRS[k][1];
+        if (!openCell(nx, ny)) continue;
+        const v = chaseField[wIdx(nx, ny)];
+        if (v >= 0 && v < best){ best = v; dir = k; }
+      }
+    } else e.chasing = false;
+  }
+  if (dir < 0){
+    for (const turn of [1, 0, 3, 2]){            // main droite : à droite, tout droit, à gauche, demi-tour
+      const k = (e.h + turn) % 4;
+      if (openCell(e.cx + DIRS[k][0], e.cy + DIRS[k][1])){ dir = k; break; }
+    }
+  }
+  if (dir < 0) return;
+  e.h = dir; e.tx = e.cx + DIRS[dir][0]; e.ty = e.cy + DIRS[dir][1];
+}
+function squashEnemy(e){
+  e.alive = false; e.respawn = 10 + Math.random() * 4;
+  const pts = SQUASH_PTS * Math.max(1, combo);
+  score += pts; stat.squashed++;
+  burst(e.x, e.y, reducedMotion ? 6 : 16, 170, '#6B2E1A');
+  burst(e.x, e.y, reducedMotion ? 2 : 6, 200, '#FFB07A', 'spark');
+  puff(e.x, e.y, 3, '#7C8E83', true);
+  addText(e.x, e.y - 14, 'écrasé +' + pts, true);
+  playSquash();
+}
+function updateEnemies(dt){
+  if (!enemies.length) return;
+  chaseT -= dt;
+  if (chaseT <= 0){ chaseT = 0.25; buildChaseField(); }
+  const frozen = fx.statue > 0 || grace > 0;
+  for (const e of enemies){
+    if (!e.alive){ e.respawn -= dt; if (e.respawn <= 0) respawnEnemy(e); continue; }
+    if (frozen) continue;
+    const sp = e.kind === 'scarab' ? SCARAB_SPEED : (e.chasing ? GARDE_SPEED : GARDE_WANDER);
+    if (!openCell(e.tx, e.ty)){ e.tx = e.cx; e.ty = e.cy; }
+    const gx = ctrX(e.tx), gy = ctrY(e.ty);
+    const dx = gx - e.x, dy = gy - e.y, dd = Math.hypot(dx, dy);
+    const step = cell * sp * dt;
+    if (dd <= step){ e.x = gx; e.y = gy; e.cx = e.tx; e.cy = e.ty; chooseNext(e); }
+    else { e.x += dx / dd * step; e.y += dy / dd * step; }
+    const tang = Math.atan2(DIRS[e.h][1], DIRS[e.h][0]);
+    let da = tang - e.ang; da = Math.atan2(Math.sin(da), Math.cos(da));
+    e.ang += da * Math.min(1, dt * 10);
+    e.legT += dt * sp * 4;
+    e.stepT -= dt;
+    if (e.stepT <= 0){
+      e.stepT = e.kind === 'scarab' ? 0.22 : 0.7;
+      const prox = Math.max(0, 1 - Math.hypot(e.x - player.x, e.y - player.y) / (cell * 7));
+      if (prox > 0.05) playEnemyStep(e.kind, prox);
+    }
+  }
+  // ils ne tuent ni pendant le répit, ni pétrifiés, ni pendant un bond
+  if (!frozen && !jump && state === 'playing'){
+    for (const e of enemies){
+      if (!e.alive) continue;
+      if (Math.hypot(e.x - player.x, e.y - player.y) < player.rad * 0.85 + enemyRad(e)){ die('ennemi'); return; }
+    }
+  }
+}
+
+// ---------- Le bond ----------
+// Un mur d'une case d'épaisseur se franchit : on se pose de l'autre côté. Jamais dans la pierre :
+// l'arrivée doit être libre et ne pas faire partie d'un passage annoncé comme se refermant.
+function tryJump(dx, dy){
+  const pcx = cellOfX(player.x), pcy = cellOfY(player.y);
+  const sx = Math.sign(dx), sy = Math.sign(dy);
+  const axes = Math.abs(dx) >= Math.abs(dy) ? [[sx, 0], [0, sy]] : [[0, sy], [sx, 0]];
+  for (const a of axes){
+    const ux = a[0], uy = a[1];
+    if (!ux && !uy) continue;
+    const wx = pcx + ux, wy = pcy + uy, lx = pcx + 2 * ux, ly = pcy + 2 * uy;
+    if (openCell(wx, wy) || !openCell(lx, ly)) continue;
+    if (tele && tele.cClose.some((c) => c.x === lx && c.y === ly)) continue;
+    jump = { x0: player.x, y0: player.y, x1: ctrX(lx), y1: ctrY(ly), t: 0, dur: JUMP_DUR };
+    player.fx = ux; player.fy = uy;
+    bondN--;
+    puff(player.x, player.y, 2, '#8A9B90');
+    playJump(); buzz(12);
+    return true;
+  }
+  return false;
+}
+function landJump(){
+  const x = jump.x1, y = jump.y1;
+  jump = null;
+  player.tx = x; player.ty = y;
+  puff(x, y, reducedMotion ? 2 : 4, '#8A9B90', true);
+  burst(x, y, reducedMotion ? 2 : 6, 90, '#54655B');
+  playLand(); buzz(15);
+  if (bondN <= 0 && fx.bond > 0) endFx('bond');
 }
 
 // ---------- Les bonus ----------
@@ -691,7 +958,8 @@ function collectTreasure(t){
 // Le type sort d'un sac mélangé (les trois à tour de rôle, jamais deux fois le même d'affilée).
 function nextBonusType(){
   if (!bonusBag.length){
-    bonusBag = ['foulee', 'aimant', 'gel'];
+    bonusBag = ['foulee', 'aimant', 'bond'];
+    if (enemies.length) bonusBag.push('statue');   // la Statue n'a de sens que s'il y a des ennemis
     for (let k = bonusBag.length - 1; k > 0; k--){
       const m = Math.floor(Math.random() * (k + 1));
       const t = bonusBag[k]; bonusBag[k] = bonusBag[m]; bonusBag[m] = t;
@@ -709,7 +977,7 @@ function spawnBonus(){
   const far = [], any = [];
   for (let k = 0; k < d.length; k++){
     const i = k % Rx, j = (k - i) / Rx;
-    if (i === pr[0] && j === pr[1]) continue;
+    if (d[k] < 0 || (i === pr[0] && j === pr[1])) continue;
     if (pick && pick.i === i && pick.j === j) continue;
     let taken = false;
     for (const t of treasures) if (t.i === i && t.j === j){ taken = true; break; }
@@ -733,6 +1001,7 @@ function fxCss(k, a){ const c = FX_META[k].col; return 'rgba(' + c[0] + ',' + c[
 function takeBonus(b){
   const m = FX_META[b.type];
   fx[b.type] = m.time; fxTickT[b.type] = 0;
+  if (b.type === 'bond') bondN = BOND_JUMPS;
   stat.bonus++;
   addText(b.x, b.y - 14, m.nom + ' !', true);
   if (!fxHintShown[b.type]){
@@ -747,7 +1016,6 @@ function takeBonus(b){
 function endFx(k){
   fx[k] = 0;
   playFxEnd();
-  if (k === 'gel') waveTimer = Math.max(waveTimer, 1.2);   // un souffle avant la prochaine vague
 }
 Object.keys(FX_META).forEach((k) => {
   const el = document.createElement('span');
@@ -769,7 +1037,7 @@ function spawnPick(){
   const far = [], any = [];
   for (let k = 0; k < d.length; k++){
     const i = k % Rx, j = (k - i) / Rx;
-    if (i === pr[0] && j === pr[1]) continue;
+    if (d[k] < 0 || (i === pr[0] && j === pr[1])) continue;
     let taken = false;
     for (const t of treasures) if (t.i === i && t.j === j){ taken = true; break; }
     if (taken) continue;
@@ -1006,9 +1274,20 @@ function playPickLost(){ snd('metalA', 0.55, 0.9); snd('gen', 0.3, 1, 0.05); }
 function playComboEnd(){ snd('tick1', 0.3, 0.75); }
 // bonus : apparition, prise (un son par effet), fin
 function playBonusSpawn(){ snd('up', 0.3, 1.25); }
+function playExitOpen(){ snd('plate', 0.8, 1); snd('door2', 0.5, 0.95, 0.05); snd('up', 0.5, 0.9, 0.1); snd('bell', 0.5, 1, 0.12); }
+function playDescent(){ snd('whoosh', 0.7, 0.8); snd('door4', 0.8, 0.9, 0.05); snd('down', 0.6, 0.8, 0.1); snd('plate', 0.5, 0.8, 0.25); }
+function playJump(){ snd('whoosh', 0.55, 1.6); snd('click3', 0.4, 1.3); }
+function playLand(){ snd('step1', 0.7, 0.9); snd('soft', 0.5, 1, 0.01); }
+function playAlert(){ snd('metalB', 0.7, 0.8); snd('creak1', 0.5, 0.9, 0.05); }
+function playSquash(){ snd('mine2', 0.7, 1); snd('soft', 0.5, 0.9, 0.02); snd('coins2', 0.5, 1, 0.05); }
+function playEnemyStep(kind, prox){
+  if (kind === 'scarab') snd('tick2', 0.22 * prox, rnd(1.2, 1.5));
+  else snd('plate', 0.28 * prox, rnd(1.2, 1.35));
+}
 function playBonus(t){
   if (t === 'foulee'){ snd('whoosh', 0.7, 1.3); snd('sw26', 0.5, 1.05, 0.03); snd('click3', 0.4, 1.2, 0.05); }
   else if (t === 'aimant'){ snd('metalA', 0.7, 1.1); snd('coins', 0.4, 1.1, 0.04); snd('sw9', 0.4, 0.95, 0.02); }
+  else if (t === 'bond'){ snd('whoosh', 0.6, 1.4); snd('sw26', 0.5, 1.2, 0.03); snd('click3', 0.4, 1.4, 0.05); }
   else { snd('glass', 0.6, 0.85); snd('down', 0.5, 1, 0.02); snd('latch', 0.5, 0.9, 0.08); }
 }
 function playFxEnd(){ snd('soft', 0.35, 1.1); snd('tick1', 0.3, 0.7, 0.05); }
@@ -1038,7 +1317,8 @@ function startGame(){
   score = 0; displayedScore = -1; combo = 0; comboTimer = 0;
   collected = 0; elapsed = 0; shake = 0; flash = 0;
   recordBeaten = false;
-  depth = 1; stat = { near: 0, bestCombo: 0, relics: 0, bonus: 0 };
+  stageIdx = 0; stageGot = 0; exitP = null; jump = null; bondN = 0; grace = 0; deathCause = 'pierre'; lastGoal = '';
+  stat = { near: 0, bestCombo: 0, relics: 0, bonus: 0, squashed: 0 };
   bonus = null; bonusT = BONUS_FIRST; bonusBag = []; lastBonus = null;
   for (const k in fx){ fx[k] = 0; fxTickT[k] = 0; }
   ui.banner.classList.remove('go');
@@ -1056,10 +1336,14 @@ function startGame(){
   ui.over.classList.add('hidden');
   ui.hud.classList.add('visible');
   layerDirty = true;
+  spawnEnemies();
+  showBanner('ÉTAGE 1', S().nom);
   initAudio(); playStart();
 }
 
-function die(){
+function die(cause){
+  deathCause = cause || 'pierre';
+  jump = null;
   state = 'dying';
   dyingTimer = 0;
   combo = 0;
@@ -1093,10 +1377,12 @@ async function endGame(){
   const sec = Math.round(elapsed), mn = Math.floor(sec / 60);
   const dur = mn > 0 ? '<b>' + mn + '</b> min <b>' + String(sec % 60).padStart(2, '0') + '</b> s' : '<b>' + sec + '</b> s';
   ui.stats.innerHTML =
-    'Profondeur <b>' + depth + '</b> · <b>' + collected + '</b> éclats' +
+    'Étage <b>' + (stageIdx + 1) + '</b> · <b>' + collected + '</b> éclats' +
     (stat.relics ? ' dont <b>' + stat.relics + '</b> relique' + (stat.relics > 1 ? 's' : '') : '') + '<br>' +
     'Meilleur enchaînement <b>×' + stat.bestCombo + '</b> · <b>' + stat.near + '</b> de justesse<br>' +
-    'Tenu ' + dur + (stat.bonus ? ' · <b>' + stat.bonus + '</b> bonus' : '');
+    'Tenu ' + dur + (stat.bonus ? ' · <b>' + stat.bonus + '</b> bonus' : '') +
+    (stat.squashed ? ' · <b>' + stat.squashed + '</b> écrasé' + (stat.squashed > 1 ? 's' : '') : '');
+  ui.overTitle.textContent = deathCause === 'ennemi' ? 'Les ruines t\u2019ont rattrapé\u2026' : 'La pierre t\u2019a recouvert\u2026';
   ui.over.classList.remove('hidden');
 }
 
@@ -1287,7 +1573,7 @@ function update(dt){
         }
       }
       if (tele.t <= 0) applyWave();
-    } else if (!(state === 'playing' && fx.gel > 0)){
+    } else {
       waveTimer -= dt;
       if (waveTimer <= 0){
         waveTimer = makeWave() ? waveDelay() : 0.3;
@@ -1295,6 +1581,12 @@ function update(dt){
     }
     creakT -= dt;
     if (creakT <= 0){ playCreak(); creakT = 6 + Math.random() * 9; }
+  }
+
+  if (state === 'transition'){
+    transT += dt;
+    if (!transSwitched && transT >= 0.6){ transSwitched = true; nextStage(); }
+    if (transT >= 1.3) state = 'playing';
   }
 
   if (state === 'playing'){
@@ -1356,6 +1648,16 @@ function update(dt){
       player.fx += (mvx * inv - player.fx) * Math.min(1, dt * 14);
       player.fy += (mvy * inv - player.fy) * Math.min(1, dt * 14);
     }
+    // le bond : on avance sur l'arc, sans collision, jusqu'à l'arrivée
+    if (jump){
+      jump.t += dt;
+      const jp = Math.min(1, jump.t / jump.dur);
+      player.x = jump.x0 + (jump.x1 - jump.x0) * jp;
+      player.y = jump.y0 + (jump.y1 - jump.y0) * jp;
+      player.tx = player.x; player.ty = player.y;
+      player.moving = 0.8; player.walk += 0.5;
+      if (jp >= 1) landJump();
+    }
     player.blinkT -= dt;
     if (player.blinkT <= -0.12) player.blinkT = 2 + Math.random() * 3;
 
@@ -1363,7 +1665,7 @@ function update(dt){
     const ph = Math.floor(player.walk * 0.6 / (Math.PI * 2));
     if (ph !== lastStep){
       lastStep = ph;
-      if (player.moving > 0.3){
+      if (player.moving > 0.3 && !jump){
         playStep();
         if (!reducedMotion) puff(player.x - player.fx * player.rad, player.y + player.rad * 0.7, 1, '#6F7F74');
       }
@@ -1371,7 +1673,7 @@ function update(dt){
 
     // creusage : pioche en main, poussée BLOQUÉE et maintenue contre un mur.
     // L'intention est requise (DIG_HOLD) : un simple frôlement ne casse rien.
-    if (hasPick && (dirx !== 0 || diry !== 0) && player.moving < 0.45){
+    if (hasPick && !jump && (dirx !== 0 || diry !== 0) && player.moving < 0.45){
       const ax = player.x + dirx * (player.rad + cell * 0.35);
       const ay = player.y + diry * (player.rad + cell * 0.35);
       const cx = Math.floor((ax - originX) / cell);
@@ -1391,6 +1693,24 @@ function update(dt){
       } else digT = 0;
     } else digT = 0;
 
+    // bond : poussée maintenue contre un mur, avec le bonus
+    if (fx.bond > 0 && !jump && (dirx !== 0 || diry !== 0) && player.moving < 0.45){
+      const bax = player.x + dirx * (player.rad + cell * 0.35);
+      const bay = player.y + diry * (player.rad + cell * 0.35);
+      const bcx = Math.floor((bax - originX) / cell), bcy = Math.floor((bay - originY) / cell);
+      if (bcx >= 0 && bcy >= 0 && bcx < gw && bcy < gh && wall[wIdx(bcx, bcy)]){
+        bondT += dt;
+        if (bondT >= BOND_HOLD){
+          bondT = 0;
+          if (!tryJump(dirx, diry) && tnow - bondMsgT > 1.5){
+            bondMsgT = tnow;
+            addText(player.x, player.y - 30, 'trop épais…');
+            playThunk();
+          }
+        }
+      } else bondT = 0;
+    } else bondT = 0;
+
     // combo
     if (comboTimer > 0){
       comboTimer -= dt;
@@ -1409,6 +1729,14 @@ function update(dt){
     }
     if (fx.foulee > 0 && mv > 0.1 && !reducedMotion && Math.random() < dt * 26){
       puff(player.x - player.fx * player.rad, player.y - player.fy * player.rad * 0.6 + player.rad * 0.5, 1, '#A4CFA8');
+    }
+
+    // ennemis et passage
+    if (grace > 0) grace -= dt;
+    updateEnemies(dt);
+    if (exitP){
+      exitP.t += dt;
+      if (state === 'playing' && !jump && Math.hypot(exitP.x - player.x, exitP.y - player.y) < player.rad + cell * 0.35) startTransition();
     }
 
     // trésors
@@ -1554,6 +1882,12 @@ function update(dt){
   } else {
     ui.combo.classList.remove('on');
   }
+  if (state === 'playing' || state === 'transition'){
+    const quota = stageQuota();
+    const gtxt = 'Étage ' + (stageIdx + 1) + ' · ' + (exitP ? 'le passage est ouvert' : Math.min(stageGot, quota) + ' / ' + quota);
+    if (gtxt !== lastGoal){ ui.goal.textContent = gtxt; lastGoal = gtxt; }
+  }
+  if (chips.bond) chips.bond.firstChild.nodeValue = 'Bond ' + Math.max(0, bondN);
   for (const k in chips){
     if (fx[k] > 0 && state === 'playing'){
       chips[k].classList.add('on');
@@ -1580,15 +1914,15 @@ const TEX = 192, CROP = 60;   // taille des textures, et du morceau qu'on y déc
 
 // une teinte de pierre par profondeur (palette du jeu : terre, mousse, cuivre, ivoire)
 const BIOMES = [
-  { stone: '#52695A', floor: '#2D3E35', face: '#34453B', moss: [104, 160, 108], vein: null },
-  { stone: '#665646', floor: '#3A2F25', face: '#463A2E', moss: [170, 152, 88],  vein: null },
-  { stone: '#4F625C', floor: '#2B3733', face: '#33423C', moss: [104, 160, 108], vein: '#C97B3D' },
-  { stone: '#645654', floor: '#392C2A', face: '#443635', moss: [200, 96, 56],   vein: '#E8B27D' },
+  { stone: '#52695A', floor: '#2D3E35', face: '#34453B', dark: [4, 8, 6], moss: [104, 160, 108], vein: null },
+  { stone: '#665646', floor: '#3A2F25', face: '#463A2E', dark: [13, 7, 3], moss: [170, 152, 88],  vein: null },
+  { stone: '#4F625C', floor: '#2B3733', face: '#33423C', dark: [3, 9, 13], moss: [104, 160, 108], vein: '#C97B3D' },
+  { stone: '#645654', floor: '#392C2A', face: '#443635', dark: [15, 6, 6], moss: [200, 96, 56],   vein: '#E8B27D' },
 ];
 let layerC = null, lightC = null, layerDirty = true;
 let mossSpots = [];
 const texCache = [];
-function biomeIdx(){ return (depth - 1) % BIOMES.length; }
+function biomeIdx(){ return S().biome % BIOMES.length; }
 
 function mulberry(a){
   return function(){
@@ -1823,12 +2157,14 @@ function drawExplorer(){
   const ang = Math.atan2(player.fy, player.fx);
   const mv = player.moving;
   const ph = Math.sin(player.walk * 0.6);
-  const bob = ph * r * 0.04 * mv;
+  const lift = jump ? Math.sin(Math.PI * Math.min(1, jump.t / jump.dur)) * cell * 0.55 : 0;   // hauteur du bond
+  const sj = 1 + lift / cell * 0.5;
+  const bob = ph * r * 0.04 * mv - lift;
   const OUT = 'rgba(40,28,18,0.7)';
   // ombre portée
-  ctx.fillStyle = 'rgba(0,0,0,0.4)';
+  ctx.fillStyle = 'rgba(0,0,0,' + (0.4 - lift / cell * 0.25).toFixed(3) + ')';
   ctx.beginPath();
-  ctx.ellipse(player.x + r * 0.1, player.y + r * 0.95, r * 0.9, r * 0.32, 0, 0, Math.PI * 2);
+  ctx.ellipse(player.x + r * 0.1, player.y + r * 0.95, r * 0.9 * (1 - lift / cell * 0.35), r * 0.32 * (1 - lift / cell * 0.35), 0, 0, Math.PI * 2);
   ctx.fill();
   // la pioche sur le dos (le bonus), derrière le corps
   if (hasPick){
@@ -1837,7 +2173,7 @@ function drawExplorer(){
   ctx.save();
   ctx.translate(player.x, player.y + bob);
   ctx.rotate(ang);
-  ctx.scale(1 + 0.06 * mv, 1 - 0.04 * mv);
+  ctx.scale((1 + 0.06 * mv) * sj, (1 - 0.04 * mv) * sj);
   ctx.lineJoin = 'round'; ctx.lineCap = 'round';
   // bottes : une avance, l'autre recule
   const stepX = ph * r * 0.5 * mv;
@@ -1971,6 +2307,111 @@ function drawTreasure(t){
   ctx.globalAlpha = 1;
 }
 
+// le passage : un escalier qui descend, une lumière chaude qui monte, des anneaux qui l'aspirent
+function drawExit(){
+  const e = exitP, sz = cell * 0.46;
+  const pulse = 0.5 + 0.5 * Math.sin(tnow * 3);
+  const glow = ctx.createRadialGradient(e.x, e.y, 0, e.x, e.y, cell * 2.4);
+  glow.addColorStop(0, 'rgba(255,233,200,' + (0.42 + 0.14 * pulse).toFixed(3) + ')');
+  glow.addColorStop(0.5, 'rgba(232,178,125,0.16)');
+  glow.addColorStop(1, 'rgba(232,178,125,0)');
+  ctx.fillStyle = glow;
+  ctx.beginPath(); ctx.arc(e.x, e.y, cell * 2.4, 0, Math.PI * 2); ctx.fill();
+  // anneaux qui se resserrent vers l'escalier
+  ctx.lineWidth = 1.4;
+  for (let k = 0; k < 3; k++){
+    const ph = (tnow * 0.7 + k / 3) % 1;
+    ctx.strokeStyle = 'rgba(255,233,200,' + ((1 - ph) * 0.5).toFixed(3) + ')';
+    ctx.beginPath(); ctx.arc(e.x, e.y, cell * 1.7 * (1 - ph) + sz * 0.5, 0, Math.PI * 2); ctx.stroke();
+  }
+  // la trémie : cadre de cuivre, trois marches qui s'enfoncent
+  ctx.save(); ctx.translate(e.x, e.y);
+  ctx.fillStyle = '#C97B3D'; ctx.fillRect(-sz, -sz, sz * 2, sz * 2);
+  const tones = ['#5C4A38', '#3E3026', '#241A14', '#120C09'];
+  for (let k = 0; k < 4; k++){
+    const m = sz * (0.86 - k * 0.2);
+    ctx.fillStyle = tones[k]; ctx.fillRect(-m, -m + k * sz * 0.1, m * 2, m * 2 - k * sz * 0.05);
+  }
+  ctx.strokeStyle = 'rgba(255,233,200,0.9)'; ctx.lineWidth = 1.4; ctx.strokeRect(-sz, -sz, sz * 2, sz * 2);
+  // trois chevrons qui descendent
+  ctx.strokeStyle = 'rgba(255,240,215,' + (0.55 + 0.4 * pulse).toFixed(3) + ')'; ctx.lineWidth = Math.max(1.6, sz * 0.14); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  for (let k = 0; k < 3; k++){
+    const y = -sz * 0.45 + k * sz * 0.4;
+    ctx.beginPath(); ctx.moveTo(-sz * 0.4, y); ctx.lineTo(0, y + sz * 0.25); ctx.lineTo(sz * 0.4, y); ctx.stroke();
+  }
+  ctx.restore();
+}
+
+// les ennemis : lueur d'argile (le danger), ombre au sol, pétrifiés ils pâlissent
+function drawEnemy(e){
+  const frozen = fx.statue > 0;
+  const R = cell * 0.34, a = frozen ? 0.18 : 0.3;
+  const gl = ctx.createRadialGradient(e.x, e.y, 0, e.x, e.y, cell * 1.1);
+  gl.addColorStop(0, 'rgba(210,100,55,' + a + ')'); gl.addColorStop(1, 'rgba(210,100,55,0)');
+  ctx.fillStyle = gl; ctx.beginPath(); ctx.arc(e.x, e.y, cell * 1.1, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = 'rgba(0,0,0,0.35)';
+  ctx.beginPath(); ctx.ellipse(e.x + R * 0.1, e.y + R * 0.7, R * 0.9, R * 0.3, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.save();
+  ctx.translate(e.x, e.y);
+  ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+  if (e.kind === 'scarab'){
+    ctx.rotate(e.ang);
+    const L = R;
+    ctx.strokeStyle = '#2A140C'; ctx.lineWidth = Math.max(1, L * 0.1);
+    for (let k = -1; k <= 1; k++){
+      for (const side of [-1, 1]){
+        const ph = Math.sin(e.legT + k * 2.1 + (side > 0 ? Math.PI : 0)) * L * 0.25;
+        ctx.beginPath(); ctx.moveTo(k * L * 0.4, side * L * 0.36); ctx.lineTo(k * L * 0.55 + ph, side * L * 0.95); ctx.stroke();
+      }
+    }
+    ctx.beginPath(); ctx.ellipse(0, 0, L * 0.85, L * 0.6, 0, 0, Math.PI * 2);
+    const bg = ctx.createLinearGradient(0, -L * 0.6, 0, L * 0.6);
+    bg.addColorStop(0, '#8A3B20'); bg.addColorStop(1, '#3A1810');
+    ctx.fillStyle = bg; ctx.fill(); ctx.strokeStyle = 'rgba(20,8,4,0.85)'; ctx.lineWidth = 1; ctx.stroke();
+    ctx.strokeStyle = 'rgba(232,178,125,0.85)'; ctx.lineWidth = Math.max(1, L * 0.1);
+    ctx.beginPath(); ctx.moveTo(-L * 0.7, 0); ctx.lineTo(L * 0.5, 0); ctx.stroke();
+    ctx.strokeStyle = 'rgba(20,8,4,0.5)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(0, 0, L * 0.45, -1.2, 1.2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(L * 0.98, 0, L * 0.3, 0, Math.PI * 2); ctx.fillStyle = '#2A140C'; ctx.fill();
+    ctx.strokeStyle = '#2A140C';
+    ctx.beginPath(); ctx.moveTo(L * 1.15, -L * 0.1); ctx.lineTo(L * 1.55, -L * 0.4); ctx.moveTo(L * 1.15, L * 0.1); ctx.lineTo(L * 1.55, L * 0.4); ctx.stroke();
+  } else {
+    // le gardien : une idole de pierre à huit pans, une braise au centre, quatre pieds qui trottent
+    const sw = Math.sin(e.legT * 0.8) * R * 0.18;
+    ctx.fillStyle = '#3D3832';
+    for (const [fx0, fy0, k] of [[-1, -1, 1], [1, -1, -1], [-1, 1, -1], [1, 1, 1]]){
+      ctx.beginPath(); ctx.ellipse(fx0 * R * 0.8 + sw * k, fy0 * R * 0.8, R * 0.26, R * 0.2, 0, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.beginPath();
+    for (let k = 0; k < 8; k++){ const an = Math.PI / 8 + k * Math.PI / 4; ctx.lineTo(Math.cos(an) * R, Math.sin(an) * R); }
+    ctx.closePath();
+    const sg = ctx.createLinearGradient(-R, -R, R, R);
+    sg.addColorStop(0, '#7B7268'); sg.addColorStop(1, '#3D3832');
+    ctx.fillStyle = sg; ctx.fill(); ctx.strokeStyle = 'rgba(20,16,12,0.9)'; ctx.lineWidth = 1.2; ctx.stroke();
+    ctx.beginPath();
+    for (let k = 0; k < 8; k++){ const an = Math.PI / 8 + k * Math.PI / 4; ctx.lineTo(Math.cos(an) * R * 0.62, Math.sin(an) * R * 0.62); }
+    ctx.closePath(); ctx.strokeStyle = 'rgba(255,240,220,0.18)'; ctx.stroke();
+    const em = e.chasing ? 0.7 + 0.3 * Math.sin(tnow * 12) : 0.45 + 0.15 * Math.sin(tnow * 3);
+    const eg = ctx.createRadialGradient(0, 0, 0, 0, 0, R * 0.6);
+    eg.addColorStop(0, 'rgba(255,170,90,' + em.toFixed(3) + ')'); eg.addColorStop(1, 'rgba(210,100,55,0)');
+    ctx.fillStyle = eg; ctx.beginPath(); ctx.arc(0, 0, R * 0.6, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(0, -R * 0.3); ctx.lineTo(R * 0.22, 0); ctx.lineTo(0, R * 0.3); ctx.lineTo(-R * 0.22, 0); ctx.closePath();
+    ctx.fillStyle = e.chasing ? '#FFB07A' : '#E2703A'; ctx.fill();
+  }
+  if (frozen){
+    ctx.fillStyle = 'rgba(214,214,232,0.55)';
+    ctx.beginPath(); ctx.arc(0, 0, R * 1.05, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.7)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(0, 0, R * 1.05, 0, Math.PI * 2); ctx.stroke();
+  }
+  ctx.restore();
+  if (e.chasing && !frozen){
+    ctx.strokeStyle = 'rgba(210,100,55,' + (0.35 + 0.3 * Math.sin(tnow * 8)).toFixed(3) + ')';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.arc(e.x, e.y, R * 1.4 + Math.sin(tnow * 8) * 2, 0, Math.PI * 2); ctx.stroke();
+  }
+}
+
 // un bonus au sol : un talisman (disque sombre, anneau coloré, graduations qui tournent) et son icône
 function drawBonus(b){
   let a = 1;
@@ -2005,11 +2446,19 @@ function drawBonus(b){
     ctx.beginPath(); ctx.moveTo(-u * 0.6, -u * 0.72); ctx.lineTo(-u * 0.6, -u * 0.05); ctx.arc(0, -u * 0.05, u * 0.6, Math.PI, 0, true); ctx.lineTo(u * 0.6, -u * 0.72); ctx.stroke();
     ctx.strokeStyle = IVORY; ctx.lineWidth = Math.max(2.2, u * 0.38);
     ctx.beginPath(); ctx.moveTo(-u * 0.6, -u * 0.72); ctx.lineTo(-u * 0.6, -u * 0.44); ctx.moveTo(u * 0.6, -u * 0.72); ctx.lineTo(u * 0.6, -u * 0.44); ctx.stroke();
-  } else {                                        // un sablier : la pierre dort
-    ctx.strokeStyle = IVORY; ctx.lineWidth = Math.max(1.5, u * 0.28);
-    ctx.beginPath(); ctx.moveTo(-u * 0.55, -u * 0.7); ctx.lineTo(u * 0.55, -u * 0.7); ctx.lineTo(0, 0); ctx.lineTo(u * 0.55, u * 0.7); ctx.lineTo(-u * 0.55, u * 0.7); ctx.lineTo(0, 0); ctx.closePath(); ctx.stroke();
-    ctx.fillStyle = fxCss('gel', 0.9);
-    ctx.beginPath(); ctx.moveTo(-u * 0.36, -u * 0.58); ctx.lineTo(u * 0.36, -u * 0.58); ctx.lineTo(0, -u * 0.14); ctx.closePath(); ctx.fill();
+  } else if (b.type === 'bond'){                  // un mur et l'arc qui l'enjambe
+    ctx.fillStyle = 'rgba(167,184,189,0.9)'; ctx.fillRect(-u * 0.28, u * 0.15, u * 0.56, u * 0.62);
+    ctx.strokeStyle = IVORY; ctx.lineWidth = Math.max(1.8, u * 0.3);
+    ctx.beginPath(); ctx.arc(0, u * 0.2, u * 0.75, Math.PI * 1.08, Math.PI * 1.92); ctx.stroke();
+    ctx.fillStyle = IVORY;
+    ctx.beginPath(); ctx.moveTo(u * 0.8, u * 0.28); ctx.lineTo(u * 0.42, u * 0.0); ctx.lineTo(u * 0.98, -u * 0.08); ctx.closePath(); ctx.fill();
+  } else {                                        // un cristal : les ennemis se pétrifient
+    ctx.strokeStyle = IVORY; ctx.lineWidth = Math.max(1.5, u * 0.26);
+    ctx.fillStyle = fxCss('statue', 0.35);
+    ctx.beginPath(); ctx.moveTo(0, -u * 0.78); ctx.lineTo(u * 0.56, -u * 0.22); ctx.lineTo(u * 0.56, u * 0.4); ctx.lineTo(0, u * 0.78);
+    ctx.lineTo(-u * 0.56, u * 0.4); ctx.lineTo(-u * 0.56, -u * 0.22); ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.lineWidth = Math.max(1, u * 0.16);
+    ctx.beginPath(); ctx.moveTo(-u * 0.56, -u * 0.22); ctx.lineTo(0, u * 0.1); ctx.lineTo(u * 0.56, -u * 0.22); ctx.moveTo(0, u * 0.1); ctx.lineTo(0, u * 0.78); ctx.stroke();
   }
   ctx.restore();
   ctx.globalAlpha = 1;
@@ -2031,7 +2480,7 @@ function drawLight(){
   const lg = lightC.getContext('2d');
   lg.globalCompositeOperation = 'source-over';
   lg.clearRect(0, 0, lw, lh);
-  lg.fillStyle = 'rgba(4,8,6,' + AMBIENT_DARK + ')';
+  lg.fillStyle = 'rgba(' + BIOMES[biomeIdx()].dark.join(',') + ',' + AMBIENT_DARK + ')';
   lg.fillRect(0, 0, lw, lh);
   lg.globalCompositeOperation = 'destination-out';
   let lx, ly, fx = 0, fy = 0;
@@ -2047,6 +2496,8 @@ function drawLight(){
   for (const t of treasures) lightHole(lg, t.x, t.y, cell * (t.big ? 3.2 : 2.3), t.big ? 0.8 : 0.6);
   if (pick) lightHole(lg, pick.x, pick.y, cell * 2, 0.5);
   if (bonus) lightHole(lg, bonus.x, bonus.y, cell * 2, 0.55);
+  if (exitP) lightHole(lg, exitP.x, exitP.y, cell * 3.4, 0.9);
+  for (const e of enemies) if (e.alive) lightHole(lg, e.x, e.y, cell * 1.8, 0.4);
   if (tele){
     for (const c of tele.cClose) lightHole(lg, originX + (c.x + 0.5) * cell, originY + (c.y + 0.5) * cell, cell * 1.6, 0.35);
   }
@@ -2215,13 +2666,9 @@ function draw(){
     drawPickShape(pick.x, pick.y + bp - cell * 0.05, cell * 0.34, Math.sin(pick.rot) * 0.3, a);
   }
 
+  if (exitP) drawExit();
+  for (const e of enemies) if (e.alive) drawEnemy(e);
   if (bonus) drawBonus(bonus);
-  // le Sommeil : un voile glacé sur la pierre
-  if (fx.gel > 0 && state === 'playing'){
-    ctx.fillStyle = fxCss('gel', (0.07 + 0.025 * Math.sin(tnow * 2)).toFixed(3));
-    ctx.fillRect(originX, originY, gw * cell, gh * cell);
-  }
-
   // étincelles (additives)
   ctx.globalCompositeOperation = 'lighter';
   for (const p of particles){
@@ -2297,6 +2744,13 @@ function draw(){
     }
   }
 
+  // fondu du changement d'étage
+  if (state === 'transition'){
+    const fa = transT < 0.6 ? transT / 0.6 : Math.max(0, 1 - (transT - 0.6) / 0.7);
+    ctx.fillStyle = 'rgba(5,9,7,' + Math.min(1, fa).toFixed(3) + ')';
+    ctx.fillRect(0, 0, W, H);
+  }
+
   // flash (mort)
   if (flash > 0){
     ctx.fillStyle = 'rgba(181,83,47,' + (flash * 0.3).toFixed(3) + ')';
@@ -2324,6 +2778,8 @@ function resize(){
       for (const t of treasures){ t.x = mx(t.x); t.y = my(t.y); }
       if (pick){ pick.x = mx(pick.x); pick.y = my(pick.y); }
       if (bonus){ bonus.x = mx(bonus.x); bonus.y = my(bonus.y); }
+      if (exitP){ exitP.x = mx(exitP.x); exitP.y = my(exitP.y); }
+      for (const e of enemies){ e.x = mx(e.x); e.y = my(e.y); }
     }
   }
   layerDirty = true;
