@@ -306,7 +306,7 @@ const PICK_FIRST    = 10;    // première pioche (s)
 const PICK_RESPAWN  = 16;    // délai moyen entre pioches (s), après la fin de la fenêtre
 const PICK_LIFE     = 9;     // durée de la pioche au sol (s)
 const PICK_DURATION = 7;     // fenêtre de possession : casse illimitée (s)
-const DIG_HOLD      = 0.15;  // poussée maintenue contre le mur pour creuser (s)
+const DIG_HOLD      = 0.1;   // poussée maintenue contre le mur pour creuser (s)
 const STAGE_PTS     = 150;   // bonus de passage (× numéro de l'étage)
 const GRACE         = 1.6;   // répit à l'arrivée dans un étage : ennemis figés (s)
 const SCARAB_SPEED  = 2.3;   // cases/s (le joueur : 5,6)
@@ -326,8 +326,8 @@ const JUMP_DUR      = 0.4;   // durée d'un bond (s)
 const STAGES = [
   { nom: 'Les Galeries', biome: 0, cell: 1.00, mask: 'rect',    braid: 0.14, quota: 8,  waveMul: 1.00, scarab: 0, garde: 0 },
   { nom: 'La Caverne',   biome: 1, cell: 0.82, mask: 'losange', braid: 0.45, quota: 9,  waveMul: 0.95, scarab: 2, garde: 0 },
-  { nom: 'Le Puits',     biome: 2, cell: 0.78, mask: 'croix',   braid: 0.03, quota: 10, waveMul: 0.90, scarab: 2, garde: 1, fixed: 0.3 },
-  { nom: 'La Cendre',    biome: 3, cell: 1.30, mask: 'rect',    braid: 0.10, quota: 10, waveMul: 0.85, scarab: 1, garde: 2 },
+  { nom: 'Le Puits',     biome: 2, cell: 0.90, mask: 'croix',   braid: 0.03, quota: 10, waveMul: 0.90, scarab: 2, garde: 1, fixed: 0.3 },
+  { nom: 'La Cendre',    biome: 3, cell: 1.15, mask: 'rect',    braid: 0.10, quota: 10, waveMul: 0.85, scarab: 1, garde: 2 },
 ];
 const REGION_MAX    = 0.65;  // étendue maximale d'une vague (profondeurs avancées)
 const NEAR_PTS      = 10;    // « de justesse » : points (× combo)
@@ -402,6 +402,7 @@ let roomMask = null;
 let stat = { near: 0, bestCombo: 0, relics: 0, bonus: 0, squashed: 0 };
 let deathCause = 'pierre', bondMsgT = -9, lastGoal = '';
 let helmet = true, invuln = 0;   // le casque : une vie en plus
+let swing = null, attackCd = 0;  // le coup de pioche en cours
 const CASQUE_META = { nom: 'Casque', col: [232, 178, 125], aide: 'casque neuf' };
 function bmeta(t){ return FX_META[t] || CASQUE_META; }
 
@@ -463,8 +464,8 @@ function makeMask(kind){
   const ci = (Rx - 1) / 2, cj = (Ry - 1) / 2;
   for (let j = 0; j < Ry; j++) for (let i = 0; i < Rx; i++){
     let ok = true;
-    if (kind === 'losange') ok = Math.abs(i - ci) / (Rx / 2) + Math.abs(j - cj) / (Ry / 2) <= 1.0;
-    else if (kind === 'croix') ok = Math.abs(i - ci) <= Rx * 0.2 || Math.abs(j - cj) <= Ry * 0.22;
+    if (kind === 'losange') ok = Math.abs(i - ci) / (Rx / 2) + Math.abs(j - cj) / (Ry / 2) <= 1.3;
+    else if (kind === 'croix') ok = Math.abs(i - ci) <= Rx * 0.28 || Math.abs(j - cj) <= Ry * 0.3;
     m[rid(i, j)] = ok ? 1 : 0;
   }
   return m;
@@ -475,10 +476,11 @@ function hash01(x, y){
 }
 
 // bande de contrôle en bas : le pouce ne masque jamais le labyrinthe
-function ctrlH(){ return Math.max(100, Math.min(150, H * 0.16)); }
+function ctrlH(){ return Math.max(88, Math.min(104, H * 0.115)); }
+const TOP_PAD = 80;   // la hauteur du score et de l'objectif
 
 function computeLayout(){
-  const topPad = 84, botPad = ctrlH() + 10, sidePad = 8;
+  const topPad = TOP_PAD, botPad = ctrlH() + 6, sidePad = 6;
   cell = Math.min((W - sidePad * 2) / gw, (H - topPad - botPad) / gh);
   originX = (W - gw * cell) / 2;
   originY = topPad + ((H - topPad - botPad) - gh * cell) / 2;
@@ -487,9 +489,12 @@ function computeLayout(){
 
 function newMaze(){
   const sd = S();
-  const tc = Math.max(19, Math.min(34, Math.max(22, W / 15)) * sd.cell);
-  Rx = Math.max(5, Math.min(12, Math.floor(((W - 16) / tc - 1) / 2)));
-  Ry = Math.max(6, Math.min(18, Math.floor(((H - 94 - ctrlH()) / tc - 1) / 2)));
+  // on remplit l'écran : la largeur fixe le nombre de salles, puis la hauteur disponible (moins la place du pouce) fixe les rangées
+  const availW = W - 12, availH = H - TOP_PAD - ctrlH() - 6;
+  const target = Math.max(22, Math.min(46, W / 13.5 * sd.cell));
+  Rx = Math.max(4, Math.min(12, Math.round((availW / target - 1) / 2)));
+  const cell0 = availW / (2 * Rx + 1);
+  Ry = Math.max(5, Math.min(20, Math.round((availH / cell0 - 1) / 2)));
   gw = 2 * Rx + 1; gh = 2 * Ry + 1;
   tele = null;
   let kind = sd.mask;
@@ -798,7 +803,7 @@ function nextStage(){
   stageIdx++;
   newMaze();
   treasures = []; particles = []; rings = []; texts = [];
-  pick = null; hasPick = false; pickT = PICK_FIRST; pickTime = 0; digT = 0;
+  pick = null; hasPick = false; pickT = PICK_FIRST; pickTime = 0; digT = 0; swing = null;
   bonus = null; bonusT = BONUS_FIRST * 0.6; bonusBag = []; lastBonus = null;
   for (const k in fx){ fx[k] = 0; fxTickT[k] = 0; }
   exitP = null; stageGot = 0; jump = null; bondN = 0; helmet = true; invuln = 0;
@@ -974,6 +979,44 @@ function updateEnemies(dt){
         if (helmet){ loseHelmet(e); continue; }        // le casque encaisse un coup
         die('ennemi'); return;
       }
+    }
+  }
+}
+
+// ---------- Le coup de pioche ----------
+// Sans bouton : un ennemi à portée, ou un mur fragile poussé, déclenche le coup. L'acier touche à 62 % du geste.
+function startSwing(kind, a, b, fx0, fy0){
+  swing = { t: 0, dur: kind === 'wall' ? 0.2 : 0.26, hit: false, kind, a, b };
+  const d = Math.hypot(fx0 || 0, fy0 || 0);
+  if (d > 0){ player.fx = fx0 / d; player.fy = fy0 / d; }
+  playSwing();
+}
+function hitEnemyWithPick(e){
+  if (e.kind === 'scarab') squashEnemy(e, 'brisé', SMASH_PTS);
+  else { e.stun = Math.max(e.stun, STUN_PICK); burst(e.x, e.y, 8, 140, '#B8AFA2'); addText(e.x, e.y - 16, 'assommé', true); playSmash(); buzz(30); }
+}
+function swingHit(){
+  if (swing.kind === 'wall' && isBreakable(swing.a, swing.b)) breakWall(swing.a, swing.b);
+  for (const e of enemies){
+    if (!e.alive) continue;
+    if (Math.hypot(e.x - player.x, e.y - player.y) < cell * 1.5) hitEnemyWithPick(e);
+  }
+}
+function updateSwing(dt){
+  if (swing){
+    swing.t += dt;
+    if (!swing.hit && swing.t >= swing.dur * 0.62){ swing.hit = true; swingHit(); }
+    if (swing.t >= swing.dur){ swing = null; attackCd = 0.2; }
+  } else {
+    attackCd -= dt;
+    if (hasPick && !jump && attackCd <= 0){
+      let tgt = null, best = cell * 1.5;
+      for (const e of enemies){
+        if (!e.alive) continue;
+        const d = Math.hypot(e.x - player.x, e.y - player.y);
+        if (d < best){ best = d; tgt = e; }
+      }
+      if (tgt) startSwing('enemy', 0, 0, tgt.x - player.x, tgt.y - player.y);
     }
   }
 }
@@ -1339,6 +1382,7 @@ function playJump(){ snd('whoosh', 0.55, 1.6); snd('click3', 0.4, 1.3); }
 function playLand(){ snd('step1', 0.7, 0.9); snd('soft', 0.5, 1, 0.01); }
 function playAlert(){ snd('metalB', 0.7, 0.8); snd('creak1', 0.5, 0.9, 0.05); }
 function playHelmetOff(){ snd('door4', 0.7, 1.2); snd('metalA', 0.8, 0.8, 0.02); snd('metalB', 0.5, 0.9, 0.12); }
+function playSwing(){ snd('whoosh', 0.4, 1.7); }
 function playSmash(){ snd('mine4', 0.9, 1); snd('plate', 0.6, 1.1, 0.01); snd('glassH', 0.4, 1, 0.02); }
 function playSquash(){ snd('mine2', 0.7, 1); snd('soft', 0.5, 0.9, 0.02); snd('coins2', 0.5, 1, 0.05); }
 function playEnemyStep(kind, prox){
@@ -1379,6 +1423,7 @@ function startGame(){
   score = 0; displayedScore = -1; combo = 0; comboTimer = 0;
   collected = 0; elapsed = 0; shake = 0; flash = 0;
   recordBeaten = false;
+  swing = null; attackCd = 0;
   stageIdx = 0; stageGot = 0; exitP = null; jump = null; bondN = 0; grace = 0; deathCause = 'pierre'; lastGoal = ''; helmet = true; invuln = 0;
   stat = { near: 0, bestCombo: 0, relics: 0, bonus: 0, squashed: 0 };
   bonus = null; bonusT = BONUS_FIRST; bonusBag = []; lastBonus = null;
@@ -1744,7 +1789,7 @@ function update(dt){
       if (cx >= 0 && cy >= 0 && cx < gw && cy < gh && wall[wIdx(cx, cy)]){
         if (isBreakable(cx, cy)){
           digT += dt;
-          if (digT >= DIG_HOLD) breakWall(cx, cy);
+          if (digT >= DIG_HOLD && !swing) startSwing('wall', cx, cy, dirx, diry);
         } else {
           digT = 0;
           if (!massifShown){
@@ -1755,6 +1800,8 @@ function update(dt){
         }
       } else digT = 0;
     } else digT = 0;
+
+    updateSwing(dt);
 
     // bond : poussée maintenue contre un mur, avec le bonus
     if (fx.bond > 0 && !jump && (dirx !== 0 || diry !== 0) && player.moving < 0.45){
@@ -1855,7 +1902,7 @@ function update(dt){
         }
       }
       if (pickTime <= 0){
-        hasPick = false; digT = 0;
+        hasPick = false; digT = 0; swing = null;
         addText(player.x, player.y - 30, 'la pioche se brise…');
         burst(player.x, player.y, reducedMotion ? 3 : 7, 90, '#A7B8BD');
         playPickLost();
@@ -2301,30 +2348,55 @@ function stoneBlock(x, y, w, h, seed){
 }
 
 const STEEL = '#A7B8BD';
-function drawPickShape(x, y, s, angle, alpha){
+// une vraie pioche : manche de bois, poignée, douille et tête d'acier à deux pointes courbes.
+// L'origine est la main ; l'angle part de la verticale (0 = la tête vers le haut).
+function drawPickTool(S, ang, alpha){
   ctx.save();
-  ctx.translate(x, y);
-  ctx.rotate(angle);
-  ctx.globalAlpha = alpha;
-  ctx.lineCap = 'round';
-  // manche en bois (avec un reflet)
-  ctx.strokeStyle = '#7A5A3C';
-  ctx.lineWidth = Math.max(1.8, s * 0.17);
-  ctx.beginPath(); ctx.moveTo(-s * 0.5, s * 0.5); ctx.lineTo(s * 0.32, -s * 0.32); ctx.stroke();
-  ctx.strokeStyle = 'rgba(232,200,150,0.55)';
-  ctx.lineWidth = Math.max(0.8, s * 0.05);
-  ctx.beginPath(); ctx.moveTo(-s * 0.46, s * 0.44); ctx.lineTo(s * 0.28, -s * 0.3); ctx.stroke();
-  // tête en fer, avec son éclat
-  ctx.strokeStyle = STEEL;
-  ctx.lineWidth = Math.max(2.2, s * 0.21);
-  ctx.beginPath(); ctx.arc(s * 0.32, -s * 0.32, s * 0.42, Math.PI * 0.75 - 1.25, Math.PI * 0.75 + 1.25); ctx.stroke();
-  ctx.strokeStyle = 'rgba(255,255,255,0.7)';
-  ctx.lineWidth = Math.max(0.8, s * 0.06);
-  ctx.beginPath(); ctx.arc(s * 0.32, -s * 0.32, s * 0.47, Math.PI * 0.75 - 0.9, Math.PI * 0.75 - 0.2); ctx.stroke();
+  if (alpha != null) ctx.globalAlpha = alpha;
+  ctx.rotate(ang);
+  const top = -S * 0.52, bot = S * 0.12;
+  rrect(-S * 0.03, top, S * 0.06, bot - top, S * 0.03, '#8A6A48', OUTL);
+  ctx.fillStyle = 'rgba(255,225,180,0.35)'; ctx.fillRect(-S * 0.012, top + S * 0.04, S * 0.012, bot - top - S * 0.1);
+  rrect(-S * 0.034, -S * 0.06, S * 0.068, S * 0.15, S * 0.02, '#4A3426', OUTL);
+  const w = S * 0.3, th = S * 0.07;
+  ctx.beginPath();
+  ctx.moveTo(-w, top + S * 0.1);
+  ctx.quadraticCurveTo(-w * 0.5, top - S * 0.07, 0, top - S * 0.05);
+  ctx.quadraticCurveTo(w * 0.5, top - S * 0.07, w, top + S * 0.1);
+  ctx.quadraticCurveTo(w * 0.5, top + th * 0.2, S * 0.04, top + th);
+  ctx.lineTo(-S * 0.04, top + th);
+  ctx.quadraticCurveTo(-w * 0.5, top + th * 0.2, -w, top + S * 0.1);
+  ctx.closePath();
+  const g = ctx.createLinearGradient(0, top - S * 0.06, 0, top + th);
+  g.addColorStop(0, '#D4DEE2'); g.addColorStop(0.5, '#A7B8BD'); g.addColorStop(1, '#6E7A80');
+  ctx.fillStyle = g; ctx.fill(); ctx.strokeStyle = OUTL; ctx.lineWidth = 1; ctx.stroke();
+  ctx.strokeStyle = 'rgba(255,255,255,0.6)'; ctx.lineWidth = Math.max(0.8, S * 0.025);
+  ctx.beginPath(); ctx.moveTo(-w * 0.8, top + S * 0.06); ctx.quadraticCurveTo(-w * 0.4, top - S * 0.05, 0, top - S * 0.035); ctx.stroke();
+  rrect(-S * 0.055, top - S * 0.02, S * 0.11, S * 0.09, S * 0.02, '#6E7A80', OUTL);
   ctx.restore();
-  ctx.globalAlpha = 1;
 }
-
+// angle de la pioche selon la vue et le coup : armée derrière, frappe vers l'avant, retour
+function pickAngle(view){
+  const idle = view === 'side' ? 0.65 : (view === 'up' ? -0.35 : 0.35);
+  if (!swing) return idle;
+  const p = Math.min(1, swing.t / swing.dur);
+  const back = view === 'side' ? -1.15 : (view === 'up' ? 1.2 : -1.0);
+  const hit  = view === 'side' ? 2.0  : (view === 'up' ? -2.3 : 2.6);
+  const ease = (x) => x * x * (3 - 2 * x);
+  if (p < 0.4) return idle + (back - idle) * ease(p / 0.4);
+  if (p < 0.65) return back + (hit - back) * Math.pow((p - 0.4) / 0.25, 1.6);
+  return hit + (idle - hit) * ease((p - 0.65) / 0.35);
+}
+function drawHeldPick(S, view, hx, hy){
+  const a = pickAngle(view);
+  ctx.save(); ctx.translate(hx, hy);
+  if (swing){                                  // traînée du coup
+    const p = Math.min(1, swing.t / swing.dur);
+    if (p > 0.45 && p < 0.75){ drawPickTool(S, a - 0.4, 0.22); drawPickTool(S, a - 0.8, 0.1); }
+  }
+  drawPickTool(S, a);
+  ctx.restore();
+}
 function rr(g, x, y, w, h, r){
   g.beginPath();
   if (g.roundRect) g.roundRect(x, y, w, h, r); else g.rect(x, y, w, h);
@@ -2408,8 +2480,8 @@ function drawFrontBack(S, ph, mv, back){
     ctx.beginPath(); ctx.ellipse(0, -S * 0.78, S * 0.21, S * 0.19, 0, Math.PI, 0); ctx.fillStyle = '#3B2A1E'; ctx.fill(); ctx.strokeStyle = OUTL; ctx.stroke();
   }
   if (hasPick){
-    const side = back ? 1 : -1;
-    drawPickShape(side * S * 0.3, -S * 0.82, S * 0.62, back ? 0.6 : -0.7, 1);
+    const k = back ? -1 : 1;                       // la main qui tient la pioche : à droite de l'écran de face, à gauche de dos
+    drawHeldPick(S, back ? 'up' : 'down', k * S * 0.31, -S * 0.27);
   }
 }
 function drawSide(S, ph, mv){
@@ -2449,7 +2521,7 @@ function drawSide(S, ph, mv){
   } else {
     ctx.beginPath(); ctx.ellipse(S * 0.02, -S * 0.79, S * 0.21, S * 0.19, 0, Math.PI, 0); ctx.fillStyle = '#3B2A1E'; ctx.fill(); ctx.strokeStyle = OUTL; ctx.stroke();
   }
-  if (hasPick){ drawPickShape(-S * 0.05, -S * 0.9, S * 0.62, -0.5, 1); }
+  if (hasPick) drawHeldPick(S, 'side', S * 0.1, -S * 0.3);
 }
 function drawExplorer(){
   chooseView();
@@ -2949,7 +3021,9 @@ function draw(){
     glow.addColorStop(1, 'rgba(240,234,217,0)');
     ctx.fillStyle = glow;
     ctx.beginPath(); ctx.arc(pick.x, pick.y + bp, cell * 0.95, 0, Math.PI * 2); ctx.fill();
-    drawPickShape(pick.x, pick.y + bp - cell * 0.05, cell * 0.34, Math.sin(pick.rot) * 0.3, a);
+    ctx.save(); ctx.translate(pick.x, pick.y + bp + cell * 0.1); ctx.globalAlpha = a;
+    drawPickTool(cell * 0.95, 0.9 + Math.sin(pick.rot) * 0.25);
+    ctx.restore(); ctx.globalAlpha = 1;
   }
 
   if (exitP) drawExit();
