@@ -288,6 +288,12 @@ const TREASURE_CAP  = 3;     // trésors simultanés max
 const SPAWN_DELAY   = 1.3;   // délai moyen entre apparitions (s)
 const BIG_CHANCE    = 0.14;  // proba qu'un trésor soit une relique (1 max à la fois)
 const BIG_MULT      = 5;     // valeur de la relique (× trésor normal, × combo)
+const FILON_CHANCE  = 0.14;  // proba qu'une apparition soit un filon : trois éclats d'affilée
+const FILON_LIFE    = 7;     // durée de vie d'un filon (s)
+const VAG_CHANCE    = 0.10;  // proba qu'un éclat soit un vagabond
+const VAG_LIFE      = 8;     // durée de vie du vagabond (s)
+const VAG_SPEED     = 1.6;   // cases/s (le joueur : 5,6)
+const VAG_MULT      = 3;     // valeur du vagabond (× trésor normal, × combo)
 const BIG_LIFE      = 4.5;   // durée de vie de la relique (s), un sprint, pas une cueillette
 const WAVE_START    = 4.6;   // intervalle entre vagues au départ (s)
 const WAVE_MIN      = 2.8;   // intervalle plancher (s)
@@ -334,8 +340,14 @@ const STYLES = [
   { id: 'citerne',     nom: 'Les Citernes',   hint: 'le courant t\u2019entraîne',         masks: ['rect', 'croix', 'anneau'],       cell: [0.90, 1.05], braid: [0.10, 0.20], current: 0.4 },
   { id: 'scriptorium', nom: 'Le Scriptorium', hint: '',                                   masks: ['rect', 'sablier', 'diagonale'],  cell: [0.95, 1.10], braid: [0.10, 0.18] },
   { id: 'jardin',      nom: 'Le Jardin',      hint: 'les ronces ralentissent',            masks: ['anneau', 'losange', 'rect'],     cell: [0.90, 1.05], braid: [0.20, 0.30], slow: 0.22, slowMul: 0.55 },
+  { id: 'mosaique',    nom: 'Les Mosaïques',  hint: 'les dalles dorées t\u2019élancent',   masks: ['rect', 'croix', 'sablier'],      cell: [0.95, 1.10], braid: [0.12, 0.22], boost: 0.14 },
+  { id: 'geode',       nom: 'La Géode',       hint: 'les portails te transportent',       masks: ['losange', 'anneau', 'rect'],     cell: [0.90, 1.05], braid: [0.20, 0.35], portals: 2 },
+  { id: 'marais',      nom: 'Le Marais',      hint: 'la boue ralentit',                   masks: ['anneau', 'diagonale', 'rect'],   cell: [0.90, 1.05], braid: [0.20, 0.30], slow: 0.28, slowMul: 0.5 },
 ];
 const REGION_MAX    = 0.6;   // étendue maximale d'une vague (profondeurs avancées)
+const PORTAL_COL = ['#B98CF2', '#6FE0E8'];
+const BOOST_MUL     = 1.45;  // dalles d'élan (Les Mosaïques)
+const PORTAL_COOL   = 0.8;   // invulnérabilité à l'arrivée d'un portail (s)
 const NEAR_PTS      = 10;    // « de justesse » : points (× combo)
 const BONUS_FIRST   = 14;    // premier bonus (s)
 const BONUS_RESPAWN = 13;    // délai moyen entre bonus (s), après la prise ou la disparition
@@ -406,7 +418,7 @@ let transT = 0, transSwitched = false;
 let enemies = [], grace = 0, chaseField = null, chaseT = 0;
 let jump = null, bondN = 0, bondT = 0;
 let roomMask = null;
-let stat = { near: 0, bestCombo: 0, relics: 0, bonus: 0, squashed: 0 };
+let stat = { near: 0, bestCombo: 0, relics: 0, bonus: 0, squashed: 0, filon: 0, vag: 0 };
 let deathCause = 'pierre', bondMsgT = -9, lastGoal = '';
 let helmet = true, invuln = 0;   // le casque : une vie en plus
 let swing = null, attackCd = 0;  // le coup de pioche en cours
@@ -481,6 +493,7 @@ function setStage(n, forceStyle, forceMask){
     si, id: st.id, nom: st.nom, hint: st.hint, biome: si,
     mask: forceMask || st.masks[Math.floor(Math.random() * st.masks.length)],
     cell: rnd(st.cell[0], st.cell[1]), braid: rnd(st.braid[0], st.braid[1]),
+    boost: st.boost || 0, portals: st.portals || 0,
     fixed: st.fixed || 0, slow: st.slow || 0, slowMul: st.slowMul || 1, ice: st.ice || 0, current: st.current || 0,
     quota: Math.min(14, 8 + Math.floor(n * 0.5)),
     waveMul: Math.max(0.85, 1.05 - 0.04 * n),
@@ -588,16 +601,32 @@ function buildSpecials(){
   const sd = S();
   special = new Uint8Array(gw * gh);
   currentDir = new Int8Array(gw * gh).fill(-1);
-  if (!(sd.slow || sd.ice || sd.current)) return;
+  portals = [];
+  if (!(sd.slow || sd.ice || sd.current || sd.boost || sd.portals)) return;
   const mark = (cx, cy, v) => { if (cx > 0 && cy > 0 && cx < gw - 1 && cy < gh - 1) special[wIdx(cx, cy)] = v; };
-  if (sd.slow || sd.ice){
-    const prob = sd.slow || sd.ice, v = sd.slow ? 1 : 2;
+  if (sd.slow || sd.ice || sd.boost){
+    const prob = sd.slow || sd.ice || sd.boost, v = sd.slow ? 1 : (sd.ice ? 2 : 4);
     for (let j = 0; j < Ry; j++) for (let i = 0; i < Rx; i++){
       if (!roomMask[rid(i, j)] || Math.random() > prob) continue;
       if (i === startRoom()[0] && j === startRoom()[1]) continue;     // pas sous les pieds au départ
       const cx = 2 * i + 1, cy = 2 * j + 1;
       mark(cx, cy, v); mark(cx - 1, cy, v); mark(cx + 1, cy, v); mark(cx, cy - 1, v); mark(cx, cy + 1, v);
     }
+  }
+  if (sd.portals){
+    // deux paires d'anneaux : chaque anneau est au centre d'une salle, son jumeau loin de lui
+    const rooms = [], sr0 = startRoom();
+    for (let j = 0; j < Ry; j++) for (let i = 0; i < Rx; i++) if (roomMask[rid(i, j)] && !(i === sr0[0] && j === sr0[1])) rooms.push([i, j]);
+    for (let k = rooms.length - 1; k > 0; k--){ const m = Math.floor(Math.random() * (k + 1)); const t = rooms[k]; rooms[k] = rooms[m]; rooms[m] = t; }
+    for (let n = 0; n < sd.portals && rooms.length > 3; n++){
+      const a = rooms.pop();
+      let bi = -1, bd = -1;
+      for (let k = 0; k < rooms.length; k++){ const dd = Math.abs(rooms[k][0] - a[0]) + Math.abs(rooms[k][1] - a[1]); if (dd > bd){ bd = dd; bi = k; if (dd >= 6) break; } }
+      const b = rooms.splice(bi, 1)[0];
+      const ia = portals.length;
+      portals.push({ cx: 2 * a[0] + 1, cy: 2 * a[1] + 1, twin: ia + 1, pair: n }, { cx: 2 * b[0] + 1, cy: 2 * b[1] + 1, twin: ia, pair: n });
+    }
+    for (const q of portals) special[wIdx(q.cx, q.cy)] = 5;
   }
   if (sd.current){
     for (let cy = 1; cy < gh - 1; cy++) for (let cx = 1; cx < gw - 1; cx++){
@@ -740,6 +769,15 @@ function applyWave(){
     if (wall[wIdx(ecx, ecy)]) squashEnemy(e);
     else if (!openCell(e.tx, e.ty)){ e.tx = e.cx; e.ty = e.cy; }
   }
+  for (let k = treasures.length - 1; k >= 0; k--){
+    const t = treasures[k];
+    if (t.kind !== 'vag') continue;
+    const vx = Math.max(0, Math.min(gw - 1, cellOfX(t.x))), vy = Math.max(0, Math.min(gh - 1, cellOfY(t.y)));
+    if (wall[wIdx(vx, vy)]){
+      if (t.pcx >= 0 && openCell(t.pcx, t.pcy)){ t.x = ctrX(t.pcx); t.y = ctrY(t.pcy); t.cx = t.tx = t.pcx; t.cy = t.ty = t.pcy; }
+      else { puff(t.x, t.y, 2, '#8A9B90', true); treasures.splice(k, 1); }
+    } else if (!openCell(t.tx, t.ty)){ t.tx = t.cx; t.ty = t.cy; }
+  }
   if (w.cClose.length){
     for (const e of enemies) if (e.alive) e.stun = Math.max(e.stun, STARTLE);
     playRumble();
@@ -775,13 +813,60 @@ function playerRoom(){
   const j = Math.max(0, Math.min(Ry - 1, Math.round(((player.y - originY) / cell - 1) / 2)));
   return [i, j];
 }
+// voisins d'une salle par les passages ouverts
+function roomNbrs(i, j){
+  const out = [];
+  if (i > 0      && openE.has(eH(i - 1, j))) out.push([i - 1, j]);
+  if (i < Rx - 1 && openE.has(eH(i, j)))     out.push([i + 1, j]);
+  if (j > 0      && openE.has(eV(i, j - 1))) out.push([i, j - 1]);
+  if (j < Ry - 1 && openE.has(eV(i, j)))     out.push([i, j + 1]);
+  return out;
+}
+// le filon : trois éclats dans trois salles qui s'enchaînent (une salle, sa voisine, la suivante)
+function spawnFilon(pr, d){
+  const starts = [];
+  for (let k = 0; k < d.length; k++){ const i = k % Rx, j = (k - i) / Rx; if (d[k] >= 4 && d[k] <= 12 && !(i === pr[0] && j === pr[1])) starts.push([i, j]); }
+  for (let tries = 0; tries < 14 && starts.length; tries++){
+    const a = starts[Math.floor(Math.random() * starts.length)];
+    const n1 = roomNbrs(a[0], a[1]).filter((r) => !(r[0] === pr[0] && r[1] === pr[1]));
+    if (!n1.length) continue;
+    const b = n1[Math.floor(Math.random() * n1.length)];
+    const n2 = roomNbrs(b[0], b[1]).filter((r) => !(r[0] === a[0] && r[1] === a[1]) && !(r[0] === pr[0] && r[1] === pr[1]));
+    if (!n2.length) continue;
+    const c = n2[Math.floor(Math.random() * n2.length)];
+    const grp = { left: 3 };
+    for (const r of [a, b, c]){
+      treasures.push({ i: r[0], j: r[1], big: false, kind: 'filon', grp,
+        x: originX + (2 * r[0] + 1.5) * cell, y: originY + (2 * r[1] + 1.5) * cell, life: FILON_LIFE, rot: Math.random() * Math.PI });
+    }
+    playBigSpawn(); addRing(treasures[treasures.length - 2].x, treasures[treasures.length - 2].y);
+    return true;
+  }
+  return false;
+}
+// le vagabond dérive de salle en salle, jamais vers toi exprès, et fait demi-tour si la pierre se ferme
+function moveVag(t, dt){
+  if (!openCell(t.tx, t.ty)){ t.tx = t.cx; t.ty = t.cy; }
+  const gx = ctrX(t.tx), gy = ctrY(t.ty), dx = gx - t.x, dy = gy - t.y, dd = Math.hypot(dx, dy), step = cell * VAG_SPEED * dt;
+  if (dd <= step){
+    t.x = gx; t.y = gy; t.pcx = t.cx; t.pcy = t.cy; t.cx = t.tx; t.cy = t.ty;
+    const opts = [];
+    for (const dv of DIRS){ const nx = t.cx + dv[0], ny = t.cy + dv[1]; if (openCell(nx, ny) && !(nx === t.pcx && ny === t.pcy)) opts.push([nx, ny]); }
+    if (!opts.length && t.pcx >= 0) opts.push([t.pcx, t.pcy]);
+    if (opts.length){ const o = opts[Math.floor(Math.random() * opts.length)]; t.tx = o[0]; t.ty = o[1]; }
+    t.i = Math.max(0, Math.min(Rx - 1, Math.round((t.cx - 1) / 2))); t.j = Math.max(0, Math.min(Ry - 1, Math.round((t.cy - 1) / 2)));
+  } else { t.x += dx / dd * step; t.y += dy / dd * step; }
+  if (!reducedMotion && Math.random() < dt * 12) burst(t.x, t.y, 1, 22, 'rgb(' + tskin().glow.join(',') + ')', 'spark');
+}
 function spawnTreasure(){
   const pr = playerRoom();
   const d = roomDistances(pr[0], pr[1]);
   // relique : rare, une seule à la fois, posée plus loin
-  let hasBig = false;
-  for (const t of treasures) if (t.big){ hasBig = true; break; }
+  let hasBig = false, hasVag = false;
+  for (const t of treasures){ if (t.big) hasBig = true; if (t.kind === 'vag') hasVag = true; }
+  if (!treasures.length && Math.random() < FILON_CHANCE && spawnFilon(pr, d)) return;
   const big = !hasBig && Math.random() < BIG_CHANCE;
+  const vag = !big && !hasVag && Math.random() < VAG_CHANCE;
   const lo = big ? 6 : 4, hi = big ? 13 : 14;
   const far = [], any = [];
   for (let k = 0; k < d.length; k++){
@@ -802,9 +887,11 @@ function spawnTreasure(){
     i, j, big,
     x: originX + (2*i + 1.5) * cell,
     y: originY + (2*j + 1.5) * cell,
-    life: big ? BIG_LIFE : TREASURE_LIFE,
+    life: big ? BIG_LIFE : (vag ? VAG_LIFE : TREASURE_LIFE),
     rot: Math.random() * Math.PI,
+    kind: vag ? 'vag' : 'plain',
   };
+  if (vag){ t.cx = 2 * i + 1; t.cy = 2 * j + 1; t.tx = t.cx; t.ty = t.cy; t.pcx = -1; t.pcy = -1; }
   treasures.push(t);
   if (big){ addRing(t.x, t.y); playBigSpawn(); } else playSpawn();
 }
@@ -825,22 +912,26 @@ function showBanner(title, sub){
 function collectTreasure(t){
   combo = comboTimer > 0 ? combo + 1 : 1;
   comboTimer = COMBO_WINDOW;
-  const pts = TREASURE_PTS * (t.big ? BIG_MULT : 1) * combo;
+  const pts = TREASURE_PTS * (t.big ? BIG_MULT : (t.kind === 'vag' ? VAG_MULT : 1)) * combo;
+  const tc = 'rgb(' + tskin().glow.join(',') + ')';
   score += pts;
   collected++;
   if (combo > stat.bestCombo) stat.bestCombo = combo;
   if (t.big) stat.relics++;
-  addText(t.x, t.y - 14, '+' + pts, t.big || combo >= 3);
+  if (t.kind === 'vag'){ stat.vag++; addText(t.x, t.y - 34, 'vagabond !', true); }
+  if (t.grp){ t.grp.left--; if (t.grp.left <= 0){ stat.filon++; addText(t.x, t.y - 34, 'filon !', true); } }
+  addText(t.x, t.y - 14, '+' + pts, t.big || combo >= 3 || t.kind === 'vag');
   addRing(t.x, t.y);
   if (t.big){
     rings.push({ x: t.x, y: t.y, r: 26, life: 1 });
-    burst(t.x, t.y, reducedMotion ? 8 : 24, 200, COPPER_LIGHT, 'spark');
+    burst(t.x, t.y, reducedMotion ? 8 : 24, 200, tc, 'spark');
     burst(t.x, t.y, reducedMotion ? 2 : 6, 120, '#B97B3D');
     playRelic(combo);
     buzz(30);
     if (!reducedMotion) shake = Math.max(shake, 3);
   } else {
-    burst(t.x, t.y, reducedMotion ? 4 : 12, 150, COPPER_LIGHT, 'spark');
+    burst(t.x, t.y, reducedMotion ? 4 : 12, 150, tc, 'spark');
+    if (t.kind === 'vag') rings.push({ x: t.x, y: t.y, r: 22, life: 1 });
     playChime(combo);
     buzz(15);
   }
@@ -895,7 +986,7 @@ function nextStage(){
   player.x = player.tx = originX + (2*sr[0] + 1.5) * cell;
   player.y = player.ty = originY + (2*sr[1] + 1.5) * cell;
   player.fx = 0; player.fy = -1;
-  waveTimer = 3; spawnT = 0.6;
+  waveTimer = 3; spawnT = 0.6; portalLock = -1; boostWas = false;
   layerDirty = true;
   makeSpores();
   spawnEnemies();
@@ -1508,7 +1599,7 @@ function startGame(){
   recordBeaten = false;
   swing = null; attackCd = 0;
   stageIdx = 0; stageGot = 0; stageT = 0; exitP = null; jump = null; bondN = 0; grace = 0; deathCause = 'pierre'; lastGoal = ''; helmet = true; invuln = 0;
-  stat = { near: 0, bestCombo: 0, relics: 0, bonus: 0, squashed: 0 };
+  stat = { near: 0, bestCombo: 0, relics: 0, bonus: 0, squashed: 0, filon: 0, vag: 0 };
   bonus = null; bonusT = BONUS_FIRST; bonusBag = []; lastBonus = null;
   for (const k in fx){ fx[k] = 0; fxTickT[k] = 0; }
   ui.banner.classList.remove('go');
@@ -1518,7 +1609,7 @@ function startGame(){
   player.y = player.ty = originY + (2*sr[1] + 1.5) * cell;
   player.fx = 0; player.fy = -1; player.walk = 0;
   waveTimer = 3;
-  spawnT = 0.6;
+  spawnT = 0.6; portalLock = -1; boostWas = false;
   pick = null; hasPick = false; pickT = PICK_FIRST; pickTime = 0; digT = 0;
   massifShown = false; pickHintShown = false;
   state = 'playing';
@@ -1572,6 +1663,7 @@ async function endGame(){
     (stat.relics ? ' dont <b>' + stat.relics + '</b> relique' + (stat.relics > 1 ? 's' : '') : '') + '<br>' +
     'Meilleur enchaînement <b>×' + stat.bestCombo + '</b> · <b>' + stat.near + '</b> de justesse<br>' +
     'Tenu ' + dur + (stat.bonus ? ' · <b>' + stat.bonus + '</b> bonus' : '') +
+    (stat.filon ? ' · <b>' + stat.filon + '</b> filon' + (stat.filon > 1 ? 's' : '') : '') + (stat.vag ? ' · <b>' + stat.vag + '</b> vagabond' + (stat.vag > 1 ? 's' : '') : '') +
     (stat.squashed ? ' · <b>' + stat.squashed + '</b> écrasé' + (stat.squashed > 1 ? 's' : '') : '');
   ui.overTitle.textContent = deathCause === 'ennemi' ? 'Les ruines t\u2019ont rattrapé\u2026' : 'La pierre t\u2019a recouvert\u2026';
   ui.over.classList.remove('hidden');
@@ -1826,7 +1918,8 @@ function update(dt){
     let dirx = 0, diry = 0;
     if (dist > 0.5){
       dirx = dx / dist; diry = dy / dist;
-      const step = Math.min(dist, cell * SPEED_CELLS * (fx.foulee > 0 ? FOULEE_MULT : 1) * (terrainAt(player.x, player.y) === 1 ? S().slowMul : 1) * dt);
+      const terNow = terrainAt(player.x, player.y);
+      const step = Math.min(dist, cell * SPEED_CELLS * (fx.foulee > 0 ? FOULEE_MULT : 1) * (terNow === 1 ? S().slowMul : (terNow === 4 ? BOOST_MUL : 1)) * dt);
       moveAxis(dirx * step, 0, 0);
       moveAxis(0, diry * step, 1);
     }
@@ -1871,6 +1964,32 @@ function update(dt){
       player.tx = player.x; player.ty = player.y;
       player.moving = 0.8; player.walk += 0.5;
       if (jp >= 1) landJump();
+    }
+    // élan : un souffle quand on entre sur une dalle dorée
+    const onBoost = !jump && terrainAt(player.x, player.y) === 4;
+    if (onBoost && !boostWas){ snd('whoosh', 0.45, 1.5); if (!reducedMotion) puff(player.x, player.y, 3, '#F2D080'); }
+    boostWas = onBoost;
+    // portails : marcher sur un anneau te pose sur son jumeau (une salle libre) ; on ne repart qu'après être sorti de l'anneau d'arrivée
+    if (portals.length && !jump){
+      if (portalLock >= 0){
+        const lp = portals[portalLock];
+        if (Math.hypot(player.x - ctrX(lp.cx), player.y - ctrY(lp.cy)) > cell * 0.8) portalLock = -1;
+      } else {
+        for (let k = 0; k < portals.length; k++){
+          const pp = portals[k];
+          if (Math.hypot(player.x - ctrX(pp.cx), player.y - ctrY(pp.cy)) < cell * 0.3){
+            const q = portals[pp.twin];
+            burst(player.x, player.y, reducedMotion ? 6 : 16, 160, PORTAL_COL[pp.pair % 2], 'spark');
+            player.x = player.tx = ctrX(q.cx); player.y = player.ty = ctrY(q.cy);
+            slideV.x = 0; slideV.y = 0;
+            burst(player.x, player.y, reducedMotion ? 6 : 16, 160, PORTAL_COL[pp.pair % 2], 'spark');
+            addRing(player.x, player.y);
+            portalLock = pp.twin; invuln = Math.max(invuln, PORTAL_COOL);
+            snd('whoosh', 0.6, 1.3); snd('up', 0.4, 1.1, 0.06); buzz(20);
+            break;
+          }
+        }
+      }
     }
     player.blinkT -= dt;
     if (player.blinkT <= -0.12) player.blinkT = 2 + Math.random() * 3;
@@ -1976,7 +2095,8 @@ function update(dt){
         treasures.splice(i, 1);
         continue;
       }
-      if (fx.aimant > 0){
+      if (t.kind === 'vag') moveVag(t, dt);
+      if (fx.aimant > 0 && t.kind !== 'vag'){
         const mx = player.x - t.x, my = player.y - t.y, md = Math.hypot(mx, my);
         if (md < cell * AIMANT_RANGE && md > 1){
           const st = Math.min(md, cell * AIMANT_PULL * dt);
@@ -2142,10 +2262,14 @@ const BIOMES = [
   { style: 'citerne', amb: 0.50, spore: [150, 200, 210], stone: '#4C6A66', floor: '#1F3B45', face: '#35514F', dark: [2, 10, 14], moss: [80, 170, 150],  vein: null },
   { style: 'scriptorium', amb: 0.44, spore: [255, 225, 170], stone: '#6B4A32', floor: '#5A2B2B', face: '#8A6038', dark: [14, 7, 3], moss: [200, 150, 80], vein: null },
   { style: 'jardin',  amb: 0.46, spore: [200, 240, 140], stone: '#4B5B3A', floor: '#243A22', face: '#3A2E1E', dark: [3, 10, 4], moss: [110, 180, 90],  vein: null },
+  { style: 'mosaique', amb: 0.30, spore: [200, 235, 235], stone: '#2F6F86', floor: '#CFC4A6', face: '#245A6E', dark: [4, 18, 26], moss: [230, 200, 120], vein: null },
+  { style: 'geode',    amb: 0.55, spore: [210, 170, 255], stone: '#5B3F86', floor: '#2A1B45', face: '#3F2B66', dark: [10, 4, 22], moss: [190, 140, 255], vein: null },
+  { style: 'marais',   amb: 0.52, spore: [190, 210, 140], stone: '#4A5538', floor: '#2B2C1C', face: '#383A26', dark: [5, 8, 3],   moss: [120, 150, 70],  vein: null }
 ];
 let layerC = null, lightC = null, layerDirty = true;
 let mossSpots = [], glowSpots = [], lightSpots = [];
 let fixedE = new Set();
+let portals = [], portalLock = -1, boostWas = false, portalCd = 0;
 let special = null;          // terrain par case : 1 lent (sable, ronces), 2 glace, 3 courant
 let currentDir = null, currentCells = [];
 let slideV = { x: 0, y: 0 };
@@ -2221,6 +2345,30 @@ function rgba(c, a){ return 'rgba(' + c[0] + ',' + c[1] + ',' + c[2] + ',' + a +
 function isWall(x, y){ return x < 0 || y < 0 || x >= gw || y >= gh || wall[wIdx(x, y)] === 1; }
 
 // ---- le décor propre à chaque étage ----
+function starPath(g, x, y, R, r, n){
+  g.beginPath();
+  for (let k = 0; k < n * 2; k++){ const a = -Math.PI / 2 + k * Math.PI / n, rr_ = k % 2 ? r : R; g.lineTo(x + Math.cos(a) * rr_, y + Math.sin(a) * rr_); }
+  g.closePath();
+}
+function drawPortals(){
+  if (!portals.length) return;
+  ctx.save();
+  for (let k = 0; k < portals.length; k++){
+    const q = portals[k];
+    if (wall[wIdx(q.cx, q.cy)]) continue;
+    const x = ctrX(q.cx), y = ctrY(q.cy), col = PORTAL_COL[q.pair % 2], locked = portalLock === k;
+    const a = locked ? 0.35 : 1, ph = tnow * 1.8 + k;
+    const gl = ctx.createRadialGradient(x, y, 0, x, y, cell * 0.8);
+    gl.addColorStop(0, col + (locked ? '30' : '66')); gl.addColorStop(1, col + '00');
+    ctx.fillStyle = gl; ctx.beginPath(); ctx.arc(x, y, cell * 0.8, 0, 6.283); ctx.fill();
+    ctx.lineWidth = Math.max(1.4, cell * 0.06); ctx.lineCap = 'round'; ctx.strokeStyle = col; ctx.globalAlpha = a;
+    for (let m = 0; m < 3; m++){ const a0 = ph + m * 2.094; ctx.beginPath(); ctx.arc(x, y, cell * (0.34 + (reducedMotion ? 0 : Math.sin(tnow * 3 + m) * 0.03)), a0, a0 + 1.3); ctx.stroke(); }
+    ctx.globalAlpha = a * 0.7; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(x, y, cell * 0.2, -ph * 1.4, -ph * 1.4 + 2.2); ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+  ctx.restore();
+}
 function floorDecor(g, st, cx, cy, rx, ry, B){
   const d = hash01(cx * 1.7 + 3, cy * 2.3 + 7);
   if (st === 'caverne'){
@@ -2324,6 +2472,50 @@ function floorDecor(g, st, cx, cy, rx, ry, B){
       g.fillStyle = '#C97B3D'; g.fillRect(fx0 - 0.7, fy0 - 0.7, 1.4, 1.4);
     } else if (d > 0.95 && lightSpots.length < 10){  // une luciole
       lightSpots.push({ x: rx + cell * 0.5, y: ry + cell * 0.45, r: cell * 1.8, a: 0.4, col: [200, 240, 120] });
+    }
+  } else if (st === 'mosaique'){
+    // zellige : un carreau à étoile à huit branches, turquoise ou ivoire, filets d'or ; la dalle d'élan est dorée
+    const sp = special ? special[wIdx(cx, cy)] : 0, mx = rx + cell * 0.5, my = ry + cell * 0.5;
+    g.fillStyle = 'rgba(252,240,205,0.5)'; g.fillRect(rx, ry, cell, cell);
+    starPath(g, mx, my, cell * 0.44, cell * 0.2, 8); g.fillStyle = (cx + cy) % 2 ? 'rgba(40,150,180,0.30)' : 'rgba(200,160,70,0.28)'; g.fill();
+    g.strokeStyle = 'rgba(190,140,50,0.65)'; g.lineWidth = 1; g.stroke();
+    g.fillStyle = 'rgba(190,140,50,0.55)';
+    for (const q of [[0.1, 0.1], [0.9, 0.1], [0.1, 0.9], [0.9, 0.9]]){ g.beginPath(); g.arc(rx + cell * q[0], ry + cell * q[1], 1.4, 0, 6.283); g.fill(); }
+    if (sp === 4){
+      g.fillStyle = 'rgba(255,196,70,0.42)'; g.fillRect(rx, ry, cell, cell);
+      g.strokeStyle = 'rgba(255,240,170,0.95)'; g.lineWidth = 1.6; g.lineJoin = 'round';
+      for (const k of [-0.16, 0.12]){ g.beginPath(); g.moveTo(mx - cell * 0.2, my + cell * (k + 0.12)); g.lineTo(mx, my + cell * (k - 0.1)); g.lineTo(mx + cell * 0.2, my + cell * (k + 0.12)); g.stroke(); }
+      g.strokeStyle = 'rgba(255,214,110,0.9)'; g.strokeRect(rx + 2, ry + 2, cell - 4, cell - 4);
+    }
+  } else if (st === 'geode'){
+    const sp = special ? special[wIdx(cx, cy)] : 0;
+    if (d > 0.5 && d < 0.68){                          // éclats de cristal au sol
+      g.fillStyle = 'rgba(200,160,255,0.28)';
+      for (let k = 0; k < 3; k++){ const bx = rx + cell * (0.2 + k * 0.27 + d * 0.1), by = ry + cell * (0.7 - k * 0.12); g.beginPath(); g.moveTo(bx, by); g.lineTo(bx + 2.5, by - cell * 0.2); g.lineTo(bx + 5, by); g.closePath(); g.fill(); }
+    }
+    if (d > 0.93 && lightSpots.length < 12){
+      const mx = rx + cell * 0.5, my = ry + cell * 0.6;
+      g.fillStyle = '#C9A6FF'; g.beginPath(); g.moveTo(mx - 4, my); g.lineTo(mx - 1, my - cell * 0.3); g.lineTo(mx + 2, my); g.closePath(); g.fill();
+      g.fillStyle = '#E8D4FF'; g.beginPath(); g.moveTo(mx + 1, my); g.lineTo(mx + 4, my - cell * 0.22); g.lineTo(mx + 7, my); g.closePath(); g.fill();
+      lightSpots.push({ x: mx, y: my - cell * 0.1, r: cell * 2.2, a: 0.5, col: [180, 130, 255] });
+    }
+    if (sp === 5){                                      // le socle d'un portail ; l'anneau qui tourne est dessiné par-dessus
+      g.fillStyle = 'rgba(10,4,26,0.6)'; g.beginPath(); g.arc(rx + cell * 0.5, ry + cell * 0.5, cell * 0.42, 0, 6.283); g.fill();
+    }
+  } else if (st === 'marais'){
+    const sp = special ? special[wIdx(cx, cy)] : 0;
+    g.strokeStyle = 'rgba(120,140,60,0.5)'; g.lineWidth = 1; g.lineCap = 'round';
+    for (let k = 0; k < 4; k++){
+      const bx = rx + cell * (0.12 + hash01(cx + k * 1.3, cy * 1.7) * 0.76), by = ry + cell * (0.4 + hash01(cx * 1.3, cy + k) * 0.5);
+      g.beginPath(); g.moveTo(bx, by); g.lineTo(bx + (k % 2 ? 1.5 : -1.5), by - cell * 0.18); g.stroke();
+    }
+    if (sp === 1){                                      // une mare : eau sombre, reflets, nénuphar
+      g.fillStyle = 'rgba(14,26,24,0.8)'; g.beginPath(); g.ellipse(rx + cell * 0.5, ry + cell * 0.55, cell * 0.44, cell * 0.34, 0, 0, 6.283); g.fill();
+      g.strokeStyle = 'rgba(160,210,200,0.4)'; g.lineWidth = 1;
+      g.beginPath(); g.ellipse(rx + cell * 0.5, ry + cell * 0.55, cell * 0.3, cell * 0.2, 0, 0, 6.283); g.stroke();
+      g.fillStyle = 'rgba(80,130,60,0.9)'; g.beginPath(); g.ellipse(rx + cell * 0.66, ry + cell * 0.5, cell * 0.1, cell * 0.06, 0.3, 0, 6.283); g.fill();
+    } else if (d > 0.9 && lightSpots.length < 10){
+      lightSpots.push({ x: rx + cell * 0.5, y: ry + cell * 0.45, r: cell * 1.8, a: 0.38, col: [210, 230, 120] });
     }
   } else if (st === 'cendre'){
     if (d > 0.4 && d < 0.55){
@@ -2438,6 +2630,41 @@ function wallDecor(g, st, cx, cy, rx, ry, h, below, topH, fh, B){
         g.beginPath(); g.moveTo(px, fy); g.quadraticCurveTo(px + 2.5, fy + fh * 0.5, px - 1, fy + fh * (0.6 + hash01(cx + k, cy) * 0.4)); g.stroke();
       }
     }
+  } else if (st === 'mosaique'){
+    g.fillStyle = 'rgba(0,18,40,0.32)'; g.fillRect(rx, ry, cell, topH);
+    g.strokeStyle = 'rgba(240,200,110,0.6)'; g.lineWidth = 1; g.strokeRect(rx + 2.5, ry + 2.5, cell - 5, topH - 5);
+    starPath(g, rx + cell * 0.5, ry + topH * 0.5, cell * 0.26, cell * 0.12, 8); g.fillStyle = h > 0.5 ? 'rgba(250,236,200,0.28)' : 'rgba(60,190,210,0.28)'; g.fill();
+    if (below){
+      const fy = ry + topH, cols = ['#2E9BB5', '#F0E6CC', '#1E4F7A', '#3FB59A'], n = 5;
+      for (let k = 0; k < n; k++){ g.fillStyle = cols[(k + Math.floor(h * 7)) % 4]; g.fillRect(rx + k * cell / n + 0.5, fy + fh * 0.22, cell / n - 1, fh * 0.56); }
+      g.fillStyle = 'rgba(240,200,110,0.8)'; g.fillRect(rx, fy + fh * 0.14, cell, 1); g.fillRect(rx, fy + fh * 0.84, cell, 1);
+    }
+  } else if (st === 'geode'){
+    if (!isWall(cx, cy - 1)){                            // des cristaux qui poussent sur l'arête
+      for (let k = 0; k < 3; k++){
+        const bx = rx + cell * (0.15 + k * 0.32 + hash01(cx + k, cy) * 0.1), hh = cell * (0.16 + hash01(cx * 1.7, cy + k) * 0.2);
+        g.fillStyle = k % 2 ? '#C9A6FF' : '#9B6CE0'; g.beginPath(); g.moveTo(bx, ry + 2); g.lineTo(bx + 2.5, ry - hh); g.lineTo(bx + 5.5, ry + 2); g.closePath(); g.fill();
+        g.strokeStyle = 'rgba(30,10,60,0.6)'; g.lineWidth = 1; g.stroke();
+      }
+    }
+    g.strokeStyle = 'rgba(210,180,255,0.2)'; g.lineWidth = 1;
+    g.beginPath(); g.moveTo(rx + cell * 0.15, ry + topH * 0.8); g.lineTo(rx + cell * 0.5, ry + topH * 0.2); g.lineTo(rx + cell * 0.85, ry + topH * 0.7); g.stroke();
+    if (below){
+      const fy = ry + topH;
+      for (let k = 0; k < 3; k++){ const bx = rx + cell * (0.2 + k * 0.3); g.fillStyle = 'rgba(190,150,255,' + (0.25 + 0.2 * hash01(cx + k, cy)).toFixed(2) + ')'; g.fillRect(bx, fy + 1, 2.4, fh * 0.8); }
+    }
+  } else if (st === 'marais'){
+    if (!isWall(cx, cy - 1)){
+      g.strokeStyle = 'rgba(110,140,55,0.9)'; g.lineWidth = 1.3; g.lineCap = 'round';
+      for (let k = 0; k < 5; k++){ const bx = rx + cell * (0.1 + k * 0.2 + hash01(cx + k, cy) * 0.08); g.beginPath(); g.moveTo(bx, ry + 2); g.lineTo(bx + (k % 2 ? 2 : -2), ry - cell * (0.12 + hash01(cx * 1.3, cy + k) * 0.14)); g.stroke(); }
+      g.fillStyle = 'rgba(120,80,40,0.9)'; g.fillRect(rx + cell * 0.62, ry - cell * 0.2, 2.2, cell * 0.12);   // une quenouille
+    }
+    if (below){
+      const fy = ry + topH;
+      g.fillStyle = 'rgba(40,60,30,0.7)'; g.fillRect(rx, fy + fh * 0.65, cell, fh * 0.35);
+      g.strokeStyle = 'rgba(90,120,60,0.85)'; g.lineWidth = 1.1;
+      for (let k = 0; k < 3; k++){ const px = rx + cell * (0.18 + k * 0.32); g.beginPath(); g.moveTo(px, fy); g.quadraticCurveTo(px + 2, fy + fh * 0.5, px - 1, fy + fh * 0.9); g.stroke(); }
+    }
   } else if (st === 'cendre'){
     if (h > 0.5){
       const j = (k) => hash01(cx * 2.1 + k, cy * 1.7 - k) * 0.12;
@@ -2492,7 +2719,7 @@ function buildLayer(){
       g.fillStyle = 'rgba(0,0,0,' + (hash01(cx, cy * 5.5) * 0.12).toFixed(3) + ')';
       g.fillRect(rx, ry, cell, cell);
       // joints de dalle (pas dans une grotte, où le sol est naturel)
-      if (st !== 'caverne' && st !== 'dunes' && st !== 'scriptorium' && st !== 'jardin'){
+      if (st !== 'caverne' && st !== 'dunes' && st !== 'scriptorium' && st !== 'jardin' && st !== 'marais' && st !== 'geode'){
         g.fillStyle = 'rgba(0,0,0,0.3)';
         g.fillRect(rx + cell - 1, ry, 1, cell);
         g.fillRect(rx, ry + cell - 1, cell, 1);
@@ -2820,17 +3047,37 @@ function drawExplorer(){
 }
 
 // éclat de cuivre facetté, ou relique à halo
+const TSKIN = {
+  galerie:     { shape: 'diamond', f: ['#F5CC9F', '#E8B27D', '#B96E36', '#8E4F26'], glow: [232, 178, 125] },
+  caverne:     { shape: 'prism',   f: ['#C8F6EC', '#7FE0C8', '#2FA79A', '#1E7A78'], glow: [110, 230, 200] },
+  mine:        { shape: 'nugget',  f: ['#FFE08A', '#F2C14E', '#C68E22', '#8A5E12'], glow: [250, 205, 100] },
+  cendre:      { shape: 'ember',   f: ['#FFD08A', '#FF9A4A', '#D8501E', '#8E2A10'], glow: [255, 140, 70] },
+  dunes:       { shape: 'coin',    f: ['#FFEFB5', '#F0CC70', '#C99A38', '#8A6520'], glow: [245, 210, 120] },
+  glacier:     { shape: 'flake',   f: ['#FFFFFF', '#D8F2FF', '#9AD2F0', '#5FA6D2'], glow: [190, 235, 255] },
+  citerne:     { shape: 'pearl',   f: ['#FFFFFF', '#EAF6F2', '#BFD9DA', '#7FA7AE'], glow: [190, 240, 235] },
+  scriptorium: { shape: 'scroll',  f: ['#FFF3D0', '#EBD7A0', '#C5A863', '#8A6A30'], glow: [255, 220, 150] },
+  jardin:      { shape: 'bud',     f: ['#FFF1B8', '#F5C451', '#D89A2A', '#7E9A3A'], glow: [235, 225, 120] },
+  mosaique:    { shape: 'star8',   f: ['#BDF1F7', '#3FC0D6', '#1E7FA8', '#145A7E'], glow: [100, 210, 230] },
+  geode:       { shape: 'octa',    f: ['#E9D2FF', '#B98CF2', '#7F52C4', '#523088'], glow: [185, 140, 255] },
+  marais:      { shape: 'drop',    f: ['#FFE6A0', '#F0B04A', '#C27A1E', '#7E4A12'], glow: [240, 180, 80] },
+};
+function tskin(){ return TSKIN[BIOMES[biomeIdx()].style] || TSKIN.galerie; }
+function lighten(hex, k){
+  const n = parseInt(hex.slice(1), 16), r = n >> 16, g2 = (n >> 8) & 255, b = n & 255;
+  const m = (v) => Math.round(v + (255 - v) * k);
+  return 'rgb(' + m(r) + ',' + m(g2) + ',' + m(b) + ')';
+}
 function drawTreasure(t){
   let a = 1;
   if (t.life < 1.2) a = (Math.sin(tnow * 18) > 0) ? 1 : 0.25;   // clignote avant de mourir
-  const big = t.big;
+  const big = t.big, sk = tskin(), gc = sk.glow;
   const s = cell * (big ? 0.44 : 0.30) * (0.94 + 0.06 * Math.sin(t.rot * 2));
   const bob = Math.sin(t.rot * 0.9) * cell * 0.04;
   // lueur sur le sol
   const gr = s * (big ? 3.4 : 2.7);
   const glow = ctx.createRadialGradient(t.x, t.y, 0, t.x, t.y, gr);
-  glow.addColorStop(0, 'rgba(232,178,125,' + ((big ? 0.5 : 0.36) * a).toFixed(3) + ')');
-  glow.addColorStop(1, 'rgba(201,123,61,0)');
+  glow.addColorStop(0, 'rgba(' + gc.join(',') + ',' + ((big ? 0.5 : 0.36) * a).toFixed(3) + ')');
+  glow.addColorStop(1, 'rgba(' + gc.join(',') + ',0)');
   ctx.fillStyle = glow;
   ctx.beginPath(); ctx.arc(t.x, t.y, gr, 0, Math.PI * 2); ctx.fill();
   // ombre au sol
@@ -2848,25 +3095,100 @@ function drawTreasure(t){
       ctx.beginPath(); ctx.arc(0, 0, s * (1.55 + k * 0.28), rot, rot + 1.7); ctx.stroke();
     }
   }
-  ctx.rotate(Math.sin(t.rot) * 0.3);
-  const hw = s * 0.64, cy0 = -s * 0.1;
-  const P = { t: [0, -s], r: [hw, 0], b: [0, s], l: [-hw, 0], c: [0, cy0] };
-  const facet = (p, q, col) => {
-    ctx.beginPath(); ctx.moveTo(P[p][0], P[p][1]); ctx.lineTo(P[q][0], P[q][1]); ctx.lineTo(P.c[0], P.c[1]);
-    ctx.closePath(); ctx.fillStyle = col; ctx.fill();
-  };
-  if (big){
-    facet('t', 'l', '#FFF1DA'); facet('t', 'r', '#F2C38C'); facet('l', 'b', '#C9783A'); facet('r', 'b', '#9A5326');
-  } else {
-    facet('t', 'l', '#F5CC9F'); facet('t', 'r', '#E8B27D'); facet('l', 'b', '#B96E36'); facet('r', 'b', '#8E4F26');
+  // le vagabond : trois points de lumière qui orbitent
+  if (t.kind === 'vag'){
+    ctx.fillStyle = 'rgba(255,250,235,0.95)';
+    for (let k = 0; k < 3; k++){ const an = tnow * 3.2 + k * 2.094; ctx.beginPath(); ctx.arc(Math.cos(an) * s * 1.7, Math.sin(an) * s * 1.7, Math.max(1.3, s * 0.13), 0, 6.283); ctx.fill(); }
   }
-  ctx.beginPath(); ctx.moveTo(0, -s); ctx.lineTo(hw, 0); ctx.lineTo(0, s); ctx.lineTo(-hw, 0); ctx.closePath();
-  ctx.strokeStyle = 'rgba(60,28,10,0.6)'; ctx.lineWidth = 1; ctx.stroke();
-  ctx.strokeStyle = 'rgba(255,240,215,0.55)'; ctx.lineWidth = 0.8;
-  ctx.beginPath(); ctx.moveTo(P.l[0], P.l[1]); ctx.lineTo(P.c[0], P.c[1]); ctx.lineTo(P.r[0], P.r[1]); ctx.stroke();
+  ctx.rotate(Math.sin(t.rot) * 0.3);
+  const f = big ? sk.f.map((c) => lighten(c, 0.3)) : sk.f;
+  const dk = 'rgba(40,20,10,0.6)';
+  const poly = (pts, fill, stroke) => {
+    ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]); for (let k = 1; k < pts.length; k++) ctx.lineTo(pts[k][0], pts[k][1]); ctx.closePath();
+    ctx.fillStyle = fill; ctx.fill(); if (stroke){ ctx.strokeStyle = stroke; ctx.lineWidth = 1; ctx.lineJoin = 'round'; ctx.stroke(); }
+  };
+  const sh = sk.shape;
+  if (sh === 'diamond'){
+    const hw = s * 0.64, cy0 = -s * 0.1;
+    const P = { t: [0, -s], r: [hw, 0], b: [0, s], l: [-hw, 0], c: [0, cy0] };
+    const facet = (p, q, col) => poly([P[p], P[q], P.c], col);
+    facet('t', 'l', f[0]); facet('t', 'r', f[1]); facet('l', 'b', f[2]); facet('r', 'b', f[3]);
+    poly([P.t, P.r, P.b, P.l], 'rgba(0,0,0,0)', dk);
+    ctx.strokeStyle = 'rgba(255,240,215,0.55)'; ctx.lineWidth = 0.8;
+    ctx.beginPath(); ctx.moveTo(P.l[0], P.l[1]); ctx.lineTo(P.c[0], P.c[1]); ctx.lineTo(P.r[0], P.r[1]); ctx.stroke();
+  } else if (sh === 'prism'){
+    const hw = s * 0.6, sy = s * 0.5, tip = s * 1.15;
+    poly([[0, -tip], [hw, -sy], [-hw, -sy]], f[0]);
+    poly([[-hw, -sy], [0, -sy], [0, tip * 0.85], [-hw, sy]], f[2]);
+    poly([[0, -sy], [hw, -sy], [hw, sy], [0, tip * 0.85]], f[3]);
+    poly([[0, -tip], [hw, -sy], [hw, sy], [0, tip * 0.85], [-hw, sy], [-hw, -sy]], 'rgba(0,0,0,0)', dk);
+    ctx.strokeStyle = 'rgba(255,255,255,0.6)'; ctx.lineWidth = 0.9; ctx.beginPath(); ctx.moveTo(-hw * 0.5, -sy * 0.6); ctx.lineTo(-hw * 0.5, sy * 0.5); ctx.stroke();
+  } else if (sh === 'nugget'){
+    ctx.beginPath();
+    for (let k = 0; k < 9; k++){ const an = k * 0.698 + 0.3, r = s * (0.78 + 0.26 * hash01(k * 1.7, t.i + t.j)); const x = Math.cos(an) * r * 1.1, y = Math.sin(an) * r * 0.9; if (k) ctx.lineTo(x, y); else ctx.moveTo(x, y); }
+    ctx.closePath();
+    const g2 = ctx.createLinearGradient(-s, -s, s, s); g2.addColorStop(0, f[0]); g2.addColorStop(0.5, f[1]); g2.addColorStop(1, f[3]);
+    ctx.fillStyle = g2; ctx.fill(); ctx.strokeStyle = dk; ctx.lineWidth = 1; ctx.lineJoin = 'round'; ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,250,220,0.7)'; ctx.lineWidth = 1.1; ctx.beginPath(); ctx.moveTo(-s * 0.5, -s * 0.2); ctx.lineTo(-s * 0.15, -s * 0.5); ctx.lineTo(s * 0.2, -s * 0.4); ctx.stroke();
+  } else if (sh === 'ember'){
+    const pu = 0.8 + 0.2 * Math.sin(tnow * 6 + t.rot);
+    ctx.beginPath(); for (let k = 0; k < 6; k++){ const an = k * Math.PI / 3 + 0.5; ctx.lineTo(Math.cos(an) * s * 1.05, Math.sin(an) * s * 1.05); } ctx.closePath();
+    const g2 = ctx.createRadialGradient(0, 0, 0, 0, 0, s * 1.05); g2.addColorStop(0, f[0]); g2.addColorStop(0.5, f[1]); g2.addColorStop(1, f[3]);
+    ctx.fillStyle = g2; ctx.fill(); ctx.strokeStyle = dk; ctx.lineWidth = 1; ctx.stroke();
+    ctx.fillStyle = 'rgba(255,240,190,' + (0.5 * pu).toFixed(2) + ')'; ctx.beginPath(); ctx.arc(0, 0, s * 0.4, 0, 6.283); ctx.fill();
+  } else if (sh === 'coin'){
+    const g2 = ctx.createLinearGradient(-s, -s, s, s); g2.addColorStop(0, f[0]); g2.addColorStop(0.5, f[1]); g2.addColorStop(1, f[3]);
+    ctx.beginPath(); ctx.arc(0, 0, s * 0.95, 0, 6.283); ctx.fillStyle = g2; ctx.fill(); ctx.strokeStyle = dk; ctx.lineWidth = 1; ctx.stroke();
+    ctx.beginPath(); ctx.arc(0, 0, s * 0.74, 0, 6.283); ctx.strokeStyle = 'rgba(110,70,10,0.5)'; ctx.stroke();
+    starPath(ctx, 0, 0, s * 0.6, s * 0.28, 8); ctx.strokeStyle = 'rgba(100,60,8,0.75)'; ctx.stroke();
+  } else if (sh === 'flake'){
+    ctx.strokeStyle = f[2]; ctx.lineWidth = Math.max(1.4, s * 0.13); ctx.lineCap = 'round';
+    for (let k = 0; k < 6; k++){
+      const an = k * Math.PI / 3, c = Math.cos(an), d = Math.sin(an);
+      ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(c * s, d * s); ctx.stroke();
+      for (const sg of [-1, 1]){ const ba = an + sg * 0.6; ctx.beginPath(); ctx.moveTo(c * s * 0.6, d * s * 0.6); ctx.lineTo(c * s * 0.6 + Math.cos(ba) * s * 0.36, d * s * 0.6 + Math.sin(ba) * s * 0.36); ctx.stroke(); }
+    }
+    ctx.strokeStyle = f[0]; ctx.lineWidth = Math.max(0.8, s * 0.05);
+    for (let k = 0; k < 6; k++){ const an = k * Math.PI / 3; ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(Math.cos(an) * s, Math.sin(an) * s); ctx.stroke(); }
+    ctx.beginPath(); for (let k = 0; k < 6; k++){ const an = k * Math.PI / 3 + 0.5; ctx.lineTo(Math.cos(an) * s * 0.32, Math.sin(an) * s * 0.32); } ctx.closePath(); ctx.fillStyle = f[1]; ctx.fill();
+  } else if (sh === 'pearl'){
+    const g2 = ctx.createRadialGradient(-s * 0.3, -s * 0.3, 1, 0, 0, s * 0.9); g2.addColorStop(0, f[0]); g2.addColorStop(0.55, f[1]); g2.addColorStop(1, f[3]);
+    ctx.beginPath(); ctx.arc(0, 0, s * 0.82, 0, 6.283); ctx.fillStyle = g2; ctx.fill(); ctx.strokeStyle = 'rgba(40,70,80,0.55)'; ctx.lineWidth = 1; ctx.stroke();
+    ctx.fillStyle = 'rgba(255,255,255,0.85)'; ctx.beginPath(); ctx.ellipse(-s * 0.3, -s * 0.32, s * 0.2, s * 0.12, -0.6, 0, 6.283); ctx.fill();
+  } else if (sh === 'scroll'){
+    const w = s * 0.8, h = s * 0.62;
+    const g2 = ctx.createLinearGradient(0, -h, 0, h); g2.addColorStop(0, f[0]); g2.addColorStop(1, f[2]);
+    rr(ctx, -w, -h, w * 2, h * 2, 3); ctx.fillStyle = g2; ctx.fill(); ctx.strokeStyle = dk; ctx.lineWidth = 1; ctx.stroke();
+    for (const sd of [-1, 1]){ ctx.beginPath(); ctx.ellipse(sd * w, 0, s * 0.2, h * 1.05, 0, 0, 6.283); ctx.fillStyle = sd < 0 ? f[1] : f[3]; ctx.fill(); ctx.stroke(); ctx.beginPath(); ctx.arc(sd * w, 0, s * 0.08, 0, 6.283); ctx.strokeStyle = 'rgba(80,50,10,0.6)'; ctx.stroke(); }
+    ctx.fillStyle = '#B5372F'; ctx.fillRect(-s * 0.1, -h, s * 0.2, h * 2);
+    ctx.strokeStyle = 'rgba(100,70,20,0.45)'; ctx.lineWidth = 0.8; for (const yy of [-0.3, 0.05, 0.38]){ ctx.beginPath(); ctx.moveTo(-w * 0.8, h * yy); ctx.lineTo(-s * 0.18, h * yy); ctx.moveTo(s * 0.18, h * yy); ctx.lineTo(w * 0.8, h * yy); ctx.stroke(); }
+  } else if (sh === 'bud'){
+    for (let k = 0; k < 4; k++){ ctx.save(); ctx.rotate(k * Math.PI / 2); ctx.beginPath(); ctx.ellipse(0, -s * 0.52, s * 0.34, s * 0.52, 0, 0, 6.283); ctx.fillStyle = f[1]; ctx.fill(); ctx.strokeStyle = dk; ctx.lineWidth = 1; ctx.stroke(); ctx.restore(); }
+    for (let k = 0; k < 4; k++){ ctx.save(); ctx.rotate(k * Math.PI / 2 + Math.PI / 4); ctx.beginPath(); ctx.ellipse(0, -s * 0.4, s * 0.2, s * 0.34, 0, 0, 6.283); ctx.fillStyle = f[0]; ctx.fill(); ctx.restore(); }
+    ctx.beginPath(); ctx.arc(0, 0, s * 0.24, 0, 6.283); ctx.fillStyle = f[3]; ctx.fill(); ctx.stroke();
+  } else if (sh === 'star8'){
+    starPath(ctx, 0, 0, s * 1.08, s * 0.55, 8); ctx.fillStyle = f[2]; ctx.fill(); ctx.strokeStyle = dk; ctx.lineWidth = 1; ctx.lineJoin = 'round'; ctx.stroke();
+    ctx.save(); ctx.rotate(Math.PI / 8); starPath(ctx, 0, 0, s * 0.7, s * 0.34, 8); ctx.fillStyle = f[1]; ctx.fill(); ctx.restore();
+    ctx.beginPath(); ctx.arc(0, 0, s * 0.2, 0, 6.283); ctx.fillStyle = f[0]; ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.45)'; ctx.lineWidth = 0.8; for (let k = 0; k < 8; k += 2){ const an = -Math.PI / 2 + k * Math.PI / 4; ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(Math.cos(an) * s * 1.0, Math.sin(an) * s * 1.0); ctx.stroke(); }
+  } else if (sh === 'octa'){
+    const R = s * 0.98, ry = R * 1.15, pts = [];
+    for (let k = 0; k < 8; k++){ const an = Math.PI / 8 + k * Math.PI / 4; pts.push([Math.cos(an) * R, Math.sin(an) * ry]); }
+    poly(pts, f[2], dk);
+    const ip = pts.map((q) => [q[0] * 0.55, q[1] * 0.55]);
+    poly(ip, f[1]);
+    ctx.strokeStyle = 'rgba(255,255,255,0.4)'; ctx.lineWidth = 0.8; ctx.beginPath(); for (let k = 0; k < 8; k++){ ctx.moveTo(ip[k][0], ip[k][1]); ctx.lineTo(pts[k][0], pts[k][1]); } ctx.stroke();
+    poly([[0, -ry * 0.3], [R * 0.2, 0], [0, ry * 0.3], [-R * 0.2, 0]], f[0]);
+  } else {   // goutte d'ambre
+    ctx.beginPath(); ctx.moveTo(0, -s * 1.15); ctx.bezierCurveTo(s * 0.95, -s * 0.1, s * 0.85, s * 0.95, 0, s * 0.95); ctx.bezierCurveTo(-s * 0.85, s * 0.95, -s * 0.95, -s * 0.1, 0, -s * 1.15); ctx.closePath();
+    const g2 = ctx.createLinearGradient(-s, -s, s, s); g2.addColorStop(0, f[0]); g2.addColorStop(0.5, f[1]); g2.addColorStop(1, f[3]);
+    ctx.fillStyle = g2; ctx.fill(); ctx.strokeStyle = dk; ctx.lineWidth = 1; ctx.stroke();
+    ctx.fillStyle = 'rgba(255,255,235,0.7)'; ctx.beginPath(); ctx.ellipse(-s * 0.3, -s * 0.1, s * 0.12, s * 0.3, 0.3, 0, 6.283); ctx.fill();
+    ctx.fillStyle = 'rgba(80,40,10,0.55)'; ctx.beginPath(); ctx.arc(s * 0.2, s * 0.4, s * 0.07, 0, 6.283); ctx.fill();
+  }
   // scintillement : étoile à quatre branches
   const sp = (Math.sin(t.rot * 3) + 1) / 2;
-  const sx = -hw * 0.3, sy = -s * 0.42, sr = s * (0.12 + 0.26 * sp);
+  const sx = -s * 0.2, sy = -s * 0.42, sr = s * (0.12 + 0.26 * sp);
   ctx.fillStyle = 'rgba(255,250,235,' + (0.5 + 0.5 * sp).toFixed(3) + ')';
   ctx.beginPath();
   ctx.moveTo(sx, sy - sr); ctx.lineTo(sx + sr * 0.22, sy - sr * 0.22); ctx.lineTo(sx + sr, sy);
@@ -3228,6 +3550,8 @@ function draw(){
     }
     ctx.globalCompositeOperation = 'source-over';
   }
+
+  drawPortals();
 
   // 2) scène vivante
   if (pick){
