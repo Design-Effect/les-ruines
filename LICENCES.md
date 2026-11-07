@@ -11,3 +11,5 @@
 | Remotion `@remotion/sfx` | `whoosh` (« Woosh » par 1bob) | CC0 |
 
 **Polices** (`polices/`) : Cinzel (Natanael Gama) et Alegreya (Juan Pablo del Peral), SIL Open Font License 1.1, sous-ensemble latin, récupérées sur Google Fonts le 07/11/2026.
+
+**Mineur** (`sprites/`) : images rendues dans Blender par script (`projets/les-ruines/blender/mineur.py` de l'atelier), création Fervia, aucun élément tiers.

@@ -3185,6 +3185,39 @@ function drawSide(S, ph, mv){
   ctx.restore();
   if (hasPick) drawHeldPick(S, 'side', S * 0.12, -S * 0.3);
 }
+// Le mineur rendu dans Blender (lot 11) : 8 directions, 8 images de course, repos, pioche en main, avec et sans casque.
+// Les images sont dans sprites/ ; tant qu'une image n'est pas chargée, l'ancien dessin en code prend le relais.
+const SPR = {};
+const SPR_MODES = ['run', 'idle', 'pioche', 'run-nc', 'idle-nc', 'pioche-nc'];
+function loadSprites(){
+  for (const m of SPR_MODES) for (let d = 0; d < 8; d++) for (let f = 0; f < (m.indexOf('idle') === 0 ? 1 : 8); f++){
+    const im = new Image(); im.src = 'sprites/' + m + '_d' + d + '_f' + f + '.webp'; SPR[m + d + '_' + f] = im;
+  }
+}
+function spriteImg(m, d, f){ const im = SPR[m + d + '_' + f]; return im && im.complete && im.naturalWidth ? im : null; }
+// dessine le mineur à ses pieds (l'origine du contexte). Rend false si l'image n'est pas prête.
+function drawSpriteChar(S){
+  const d = ((Math.round(Math.atan2(player.fx, player.fy) / (Math.PI / 4)) % 8) + 8) % 8;   // 0 = vers le bas, 2 = droite, 4 = haut
+  const moving = player.moving > 0.15 || !!jump;
+  const f = Math.floor(((player.walk * WALK_W / (Math.PI * 2)) % 1 + 1) % 1 * 8) % 8;
+  const nc = helmet ? '' : '-nc';
+  let base = moving ? 'run' : 'idle';
+  const striking = !!swing;
+  if (hasPick && !striking) base = 'pioche';
+  const im = spriteImg(base + nc, d, base === 'idle' ? 0 : (moving ? f : 0));
+  if (!im) return false;
+  const D = S * 1.9;
+  ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(im, -D / 2, -0.755 * D, D, D);
+  if (hasPick && striking){                       // le coup : la pioche se dessine en code, dans la main du mineur
+    ctx.save(); ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    const v = player.view;
+    if (v === 'side'){ ctx.scale(player.sx, 1); drawHeldPick(S, 'side', S * 0.12, -S * 0.34); }
+    else drawHeldPick(S, v === 'up' ? 'up' : 'down', (v === 'up' ? -1 : 1) * S * 0.31, -S * 0.34);
+    ctx.restore();
+  }
+  return true;
+}
 function drawExplorer(){
   chooseView();
   const S = cell * 1.05;
@@ -3196,11 +3229,14 @@ function drawExplorer(){
   ctx.fillStyle = 'rgba(0,0,0,' + (0.42 - lift / cell * 0.26).toFixed(3) + ')';
   ctx.beginPath(); ctx.ellipse(player.x, fyg, S * 0.3 * (1 - lift / cell * 0.35), S * 0.1 * (1 - lift / cell * 0.35), 0, 0, Math.PI * 2); ctx.fill();
   ctx.save();
-  ctx.translate(player.x, fyg - lift - Math.abs(ph) * S * 0.07 * mv);
+  ctx.translate(player.x, fyg - lift);
   if (invuln > 0 && Math.sin(tnow * 34) > 0) ctx.globalAlpha = 0.35;
-  ctx.lineJoin = 'round'; ctx.lineCap = 'round';
-  if (player.view === 'side'){ ctx.scale(player.sx, 1); drawSide(S, ph, mv); }
-  else drawFrontBack(S, ph, mv, player.view === 'up');
+  if (!drawSpriteChar(S)){
+    ctx.translate(0, -Math.abs(ph) * S * 0.07 * mv);
+    ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    if (player.view === 'side'){ ctx.scale(player.sx, 1); drawSide(S, ph, mv); }
+    else drawFrontBack(S, ph, mv, player.view === 'up');
+  }
   ctx.restore();
   ctx.globalAlpha = 1;
   const r = player.rad * 1.12;
@@ -3941,6 +3977,7 @@ function loop(now){
   newMaze();          // le labyrinthe vit déjà derrière l'écran titre
   makeSpores();
   initAudio();
+  loadSprites();
   best = await loadBest();
   ui.menuBest.textContent = best > 0 ? 'Record · ' + best : '';
   requestAnimationFrame(loop);
