@@ -11,7 +11,7 @@ iPhone : ouvrir l'URL dans Safari → Partager → « Sur l'écran d'accueil »
 → le jeu s'installe en plein écran, jouable hors-ligne.
 
 ⚠️ À chaque mise à jour du jeu, incrémenter `CACHE` dans sw.js
-('ruines-v9' → 'ruines-v10'…) sinon les joueurs gardent l'ancienne version.
+('ruines-v10' → 'ruines-v11'…) sinon les joueurs gardent l'ancienne version.
 Tout fichier ajouté au jeu doit aussi entrer dans la liste `CORE` de sw.js :
 le service worker ne fait aucun appel réseau, il ne sert que ce qu'il a précaché.
 

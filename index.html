@@ -322,12 +322,18 @@ const SQUASH_PTS    = 40;    // ennemi écrasé par la pierre (× combo)
 const BOND_JUMPS    = 3;     // sauts par bonus
 const BOND_HOLD     = 0.1;   // poussée maintenue contre le mur avant de bondir (s)
 const JUMP_DUR      = 0.4;   // durée d'un bond (s)
-// les quatre étages : chacun son format, sa teinte, ses ennemis. Après le quatrième, on boucle en montant d'un cran.
-const STAGES = [
-  { nom: 'Les Galeries', biome: 0, cell: 1.00, mask: 'rect',    braid: 0.14, quota: 8,  waveMul: 1.00, scarab: 0, garde: 0 },
-  { nom: 'La Caverne',   biome: 1, cell: 0.82, mask: 'losange', braid: 0.45, quota: 9,  waveMul: 1.00, scarab: 2, garde: 0 },
-  { nom: 'Le Puits',     biome: 2, cell: 0.90, mask: 'croix',   braid: 0.03, quota: 10, waveMul: 0.95, scarab: 2, garde: 1, fixed: 0.3 },
-  { nom: 'La Cendre',    biome: 3, cell: 1.15, mask: 'rect',    braid: 0.10, quota: 10, waveMul: 0.95, scarab: 1, garde: 2 },
+// neuf styles de pièce. L'étage 1 est toujours Les Galeries ; ensuite l'ordre est tiré au sort, jamais deux fois le même d'affilée.
+// Chaque style a plusieurs formats possibles, une fourchette de taille de cases et de boucles, et parfois une règle de terrain.
+const STYLES = [
+  { id: 'galerie',     nom: 'Les Galeries',   hint: '',                                   masks: ['rect'],                          cell: [1.00, 1.00], braid: [0.12, 0.16] },
+  { id: 'caverne',     nom: 'La Caverne',     hint: 'la grotte est sombre',               masks: ['losange', 'anneau'],             cell: [0.82, 0.95], braid: [0.35, 0.50] },
+  { id: 'mine',        nom: 'Le Puits',       hint: 'les portiques ne se referment pas',  masks: ['croix', 'sablier'],              cell: [0.85, 0.95], braid: [0.02, 0.06], fixed: 0.3 },
+  { id: 'cendre',      nom: 'La Cendre',      hint: '',                                   masks: ['rect', 'diagonale'],             cell: [1.05, 1.20], braid: [0.08, 0.12] },
+  { id: 'dunes',       nom: 'Les Dunes',      hint: 'le sable ralentit',                  masks: ['rect', 'diagonale', 'anneau'],   cell: [0.90, 1.05], braid: [0.20, 0.30], slow: 0.22, slowMul: 0.6 },
+  { id: 'glacier',     nom: 'La Glacière',    hint: 'la glace glisse',                    masks: ['losange', 'sablier', 'rect'],    cell: [0.90, 1.05], braid: [0.10, 0.20], ice: 0.38 },
+  { id: 'citerne',     nom: 'Les Citernes',   hint: 'le courant t\u2019entraîne',         masks: ['rect', 'croix', 'anneau'],       cell: [0.90, 1.05], braid: [0.10, 0.20], current: 0.4 },
+  { id: 'scriptorium', nom: 'Le Scriptorium', hint: '',                                   masks: ['rect', 'sablier', 'diagonale'],  cell: [0.95, 1.10], braid: [0.10, 0.18] },
+  { id: 'jardin',      nom: 'Le Jardin',      hint: 'les ronces ralentissent',            masks: ['anneau', 'losange', 'rect'],     cell: [0.90, 1.05], braid: [0.20, 0.30], slow: 0.22, slowMul: 0.55 },
 ];
 const REGION_MAX    = 0.6;   // étendue maximale d'une vague (profondeurs avancées)
 const NEAR_PTS      = 10;    // « de justesse » : points (× combo)
@@ -455,18 +461,59 @@ function forEachEdge(fn){
     if (j < Ry - 1 && ok(i, j + 1)) fn(eV(i, j));
   }
 }
-function S(){ return STAGES[stageIdx % STAGES.length]; }
-function tier(){ return Math.floor(stageIdx / STAGES.length); }
-function stageQuota(){ return S().quota + 2 * tier(); }
+let styleBag = [], lastStyle = 0, curStage = null;
+function nextStyleIndex(){
+  if (!styleBag.length){
+    styleBag = STYLES.map((_, i) => i).filter((i) => i !== lastStyle);
+    for (let k = styleBag.length - 1; k > 0; k--){ const m = Math.floor(Math.random() * (k + 1)); const t = styleBag[k]; styleBag[k] = styleBag[m]; styleBag[m] = t; }
+  }
+  lastStyle = styleBag.pop();
+  return lastStyle;
+}
+// décrit l'étage n : son style (tiré au sort), son format, ses cases, ses ennemis. La difficulté vient du numéro, pas du style.
+function setStage(n, forceStyle, forceMask){
+  let si;
+  if (forceStyle != null) si = forceStyle;
+  else if (n === 0){ si = 0; lastStyle = 0; styleBag = []; }
+  else si = nextStyleIndex();
+  const st = STYLES[si], rnd = (a, b) => a + Math.random() * (b - a);
+  curStage = {
+    si, id: st.id, nom: st.nom, hint: st.hint, biome: si,
+    mask: forceMask || st.masks[Math.floor(Math.random() * st.masks.length)],
+    cell: rnd(st.cell[0], st.cell[1]), braid: rnd(st.braid[0], st.braid[1]),
+    fixed: st.fixed || 0, slow: st.slow || 0, slowMul: st.slowMul || 1, ice: st.ice || 0, current: st.current || 0,
+    quota: Math.min(14, 8 + Math.floor(n * 0.5)),
+    waveMul: Math.max(0.85, 1.05 - 0.04 * n),
+    scarab: n >= 1 ? Math.min(3, 1 + Math.floor((n + 1) / 2)) : 0,
+    garde: n >= 2 ? Math.min(3, Math.floor(n / 2)) : 0,
+  };
+}
+function S(){ if (!curStage) setStage(0); return curStage; }
+function stageQuota(){ return S().quota; }
+function stageTitle(){ return S().nom + (S().hint ? ' \u00b7 ' + S().hint : ''); }
+// la salle de départ : celle du centre, ou la plus proche si le centre est du roc (anneau)
+function startRoom(){
+  const ci = (Rx - 1) / 2, cj = (Ry - 1) / 2;
+  let best = null, bd = 1e9;
+  for (let j = 0; j < Ry; j++) for (let i = 0; i < Rx; i++){
+    if (roomMask && !roomMask[rid(i, j)]) continue;
+    const d = (i - ci) * (i - ci) + (j - cj) * (j - cj);
+    if (d < bd){ bd = d; best = [i, j]; }
+  }
+  return best || [Math.floor(Rx / 2), Math.floor(Ry / 2)];
+}
 // le format : quelles salles existent (le reste est du roc plein)
 function makeMask(kind){
   const m = new Uint8Array(Rx * Ry).fill(1);
   if (kind === 'rect') return m;
-  const ci = (Rx - 1) / 2, cj = (Ry - 1) / 2;
+  const ci = (Rx - 1) / 2, cj = (Ry - 1) / 2, flip = Math.random() < 0.5;
   for (let j = 0; j < Ry; j++) for (let i = 0; i < Rx; i++){
     let ok = true;
     if (kind === 'losange') ok = Math.abs(i - ci) / (Rx / 2) + Math.abs(j - cj) / (Ry / 2) <= 1.3;
     else if (kind === 'croix') ok = Math.abs(i - ci) <= Rx * 0.28 || Math.abs(j - cj) <= Ry * 0.3;
+    else if (kind === 'anneau'){ const nx = (i - ci) / (Rx / 2), ny = (j - cj) / (Ry / 2), nr = Math.sqrt(nx * nx + ny * ny); ok = nr >= 0.42 && nr <= 1.18; }
+    else if (kind === 'sablier') ok = Math.abs(i - ci) <= Rx * (0.3 + 0.7 * Math.abs(j - cj) / (cj || 1)) / 2 + 0.2;
+    else if (kind === 'diagonale') ok = Math.abs((flip ? Rx - 1 - i : i) / (Rx - 1) - j / (Ry - 1)) <= 0.42;
     m[rid(i, j)] = ok ? 1 : 0;
   }
   return m;
@@ -506,7 +553,7 @@ function newMaze(){
     const seen = new Uint8Array(Rx * Ry);
     let valid = 0;
     for (let k = 0; k < seen.length; k++){ if (!roomMask[k]) seen[k] = 1; else valid++; }
-    const start = [Math.floor(Rx / 2), Math.floor(Ry / 2)];
+    const start = startRoom();
     seen[rid(start[0], start[1])] = 1;
     let visited = 1;
     const stack = [start];
@@ -524,7 +571,7 @@ function newMaze(){
       openE.add(n[2]);
       stack.push([n[0], n[1]]);
     }
-    if (visited === valid || kind === 'rect') break;
+    if ((visited === valid && valid >= 28) || kind === 'rect') break;
     kind = 'rect';   // un format qui ne se relie pas : on retombe sur le rectangle
   }
   // tressage : des boucles (beaucoup dans une caverne, presque aucune dans un puits)
@@ -533,6 +580,40 @@ function newMaze(){
   if (sd.fixed) openE.forEach((e) => { if (Math.random() < sd.fixed) fixedE.add(e); });
   buildWalls();
   computeLayout();
+  buildSpecials();
+}
+// terrains : sable meuble et ronces ralentissent, la glace fait glisser, le courant entraîne.
+// Posés par pastilles (une salle et ses quatre passages), visibles, jamais mortels.
+function buildSpecials(){
+  const sd = S();
+  special = new Uint8Array(gw * gh);
+  currentDir = new Int8Array(gw * gh).fill(-1);
+  if (!(sd.slow || sd.ice || sd.current)) return;
+  const mark = (cx, cy, v) => { if (cx > 0 && cy > 0 && cx < gw - 1 && cy < gh - 1) special[wIdx(cx, cy)] = v; };
+  if (sd.slow || sd.ice){
+    const prob = sd.slow || sd.ice, v = sd.slow ? 1 : 2;
+    for (let j = 0; j < Ry; j++) for (let i = 0; i < Rx; i++){
+      if (!roomMask[rid(i, j)] || Math.random() > prob) continue;
+      if (i === startRoom()[0] && j === startRoom()[1]) continue;     // pas sous les pieds au départ
+      const cx = 2 * i + 1, cy = 2 * j + 1;
+      mark(cx, cy, v); mark(cx - 1, cy, v); mark(cx + 1, cy, v); mark(cx, cy - 1, v); mark(cx, cy + 1, v);
+    }
+  }
+  if (sd.current){
+    for (let cy = 1; cy < gh - 1; cy++) for (let cx = 1; cx < gw - 1; cx++){
+      if ((cx + cy) % 2 !== 1) continue;                                // seulement les passages
+      if (Math.random() > sd.current) continue;
+      special[wIdx(cx, cy)] = 3;
+      const horiz = cx % 2 === 0;                                       // passage horizontal : courant vers la gauche ou la droite
+      currentDir[wIdx(cx, cy)] = horiz ? (Math.random() < 0.5 ? 0 : 2) : (Math.random() < 0.5 ? 1 : 3);
+    }
+  }
+}
+function terrainAt(x, y){
+  if (!special) return 0;
+  const cx = cellOfX(x), cy = cellOfY(y);
+  if (cx < 0 || cy < 0 || cx >= gw || cy >= gh) return 0;
+  return special[wIdx(cx, cy)];
 }
 
 function buildWalls(){
@@ -550,7 +631,7 @@ function teleDur(){
 }
 function waveDelay(){
   if (state !== 'playing') return 4.5;
-  return Math.max(WAVE_MIN, WAVE_START - stageT * 0.012 - stageGot * 0.05) * S().waveMul * Math.pow(0.97, tier());
+  return Math.max(WAVE_MIN, WAVE_START - stageT * 0.012 - stageGot * 0.05) * S().waveMul;
 }
 
 function makeWave(){
@@ -802,6 +883,7 @@ function startTransition(){
 }
 function nextStage(){
   stageIdx++;
+  setStage(stageIdx);
   newMaze();
   treasures = []; particles = []; rings = []; texts = [];
   pick = null; hasPick = false; pickT = PICK_FIRST; pickTime = 0; digT = 0; swing = null;
@@ -809,17 +891,16 @@ function nextStage(){
   for (const k in fx){ fx[k] = 0; fxTickT[k] = 0; }
   exitP = null; stageGot = 0; stageT = 0; jump = null; bondN = 0; helmet = true; invuln = 0;
   combo = 0; comboTimer = 0;
-  const ci = Math.floor(Rx / 2), cj = Math.floor(Ry / 2);
-  player.x = player.tx = originX + (2*ci + 1.5) * cell;
-  player.y = player.ty = originY + (2*cj + 1.5) * cell;
+  const sr = startRoom();
+  player.x = player.tx = originX + (2*sr[0] + 1.5) * cell;
+  player.y = player.ty = originY + (2*sr[1] + 1.5) * cell;
   player.fx = 0; player.fy = -1;
   waveTimer = 3; spawnT = 0.6;
   layerDirty = true;
   makeSpores();
   spawnEnemies();
   grace = GRACE;
-  const nom = S().nom + (tier() ? ' \u00b7 niveau ' + (tier() + 1) : '');
-  showBanner('ÉTAGE ' + (stageIdx + 1), nom);
+  showBanner('ÉTAGE ' + (stageIdx + 1), stageTitle());
 }
 
 // ---------- Les ennemis ----------
@@ -844,8 +925,7 @@ function farRooms(minD){
 }
 function spawnEnemies(){
   enemies = [];
-  const sd = S(), t = tier();
-  const nS = sd.scarab + t, nG = sd.garde + (t >= 2 ? 1 : 0);
+  const nS = S().scarab, nG = S().garde;
   const pool = farRooms(6);
   let n = 0;
   for (let k = 0; k < nS && n < pool.length; k++) enemies.push(makeEnemy('scarab', pool[n++]));
@@ -1227,7 +1307,7 @@ function makeSpores(){
     spores.push({
       x: Math.random() * W, y: Math.random() * H,
       r: 0.7 + Math.random() * 1.5,
-      vy: ember ? 22 + Math.random() * 40 : 5 + Math.random() * 12,
+      vy: ember ? 22 + Math.random() * 40 : (BIOMES[biomeIdx()].style === 'glacier' ? -(10 + Math.random() * 18) : 5 + Math.random() * 12),
       ph: Math.random() * Math.PI * 2,
       a: ember ? 0.25 + Math.random() * 0.4 : 0.08 + Math.random() * 0.16,
     });
@@ -1419,6 +1499,8 @@ ui.mute.addEventListener('click', (e) => {
 
 // ---------- Déroulement ----------
 function startGame(){
+  stageIdx = 0;
+  setStage(0);
   newMaze();
   treasures = []; particles = []; rings = []; texts = [];
   score = 0; displayedScore = -1; combo = 0; comboTimer = 0;
@@ -1431,9 +1513,9 @@ function startGame(){
   for (const k in fx){ fx[k] = 0; fxTickT[k] = 0; }
   ui.banner.classList.remove('go');
   ui.score.classList.remove('record');
-  const ci = Math.floor(Rx / 2), cj = Math.floor(Ry / 2);
-  player.x = player.tx = originX + (2*ci + 1.5) * cell;
-  player.y = player.ty = originY + (2*cj + 1.5) * cell;
+  const sr = startRoom();
+  player.x = player.tx = originX + (2*sr[0] + 1.5) * cell;
+  player.y = player.ty = originY + (2*sr[1] + 1.5) * cell;
   player.fx = 0; player.fy = -1; player.walk = 0;
   waveTimer = 3;
   spawnT = 0.6;
@@ -1446,7 +1528,7 @@ function startGame(){
   layerDirty = true;
   makeSpores();
   spawnEnemies();
-  showBanner('ÉTAGE 1', S().nom);
+  showBanner('ÉTAGE 1', stageTitle());
   initAudio(); playStart();
 }
 
@@ -1657,6 +1739,7 @@ function update(dt){
     s.ph += dt;
     s.x += Math.sin(s.ph) * 5 * dt;
     if (s.y < -4){ s.y = H + 4; s.x = Math.random() * W; }
+    else if (s.y > H + 4){ s.y = -4; s.x = Math.random() * W; }
   }
 
   // la structure vit : vagues actives en jeu ET sur l'écran titre
@@ -1743,7 +1826,7 @@ function update(dt){
     let dirx = 0, diry = 0;
     if (dist > 0.5){
       dirx = dx / dist; diry = dy / dist;
-      const step = Math.min(dist, cell * SPEED_CELLS * (fx.foulee > 0 ? FOULEE_MULT : 1) * dt);
+      const step = Math.min(dist, cell * SPEED_CELLS * (fx.foulee > 0 ? FOULEE_MULT : 1) * (terrainAt(player.x, player.y) === 1 ? S().slowMul : 1) * dt);
       moveAxis(dirx * step, 0, 0);
       moveAxis(0, diry * step, 1);
     }
@@ -1757,6 +1840,28 @@ function update(dt){
       player.fx += (mvx * inv - player.fx) * Math.min(1, dt * 14);
       player.fy += (mvy * inv - player.fy) * Math.min(1, dt * 14);
     }
+    // terrains : la glace fait glisser après la poussée, le courant entraîne
+    if (!jump){
+      const ter = terrainAt(player.x, player.y);
+      if (ter === 2){
+        if (ix !== 0 || iy !== 0){ slideV.x = mvx / dt; slideV.y = mvy / dt; }
+        else {
+          const f = Math.max(0, 1 - 3.0 * dt);
+          slideV.x *= f; slideV.y *= f;
+          const sp = Math.hypot(slideV.x, slideV.y);
+          if (sp > cell * 0.4){
+            moveAxis(slideV.x * dt, 0, 0); moveAxis(0, slideV.y * dt, 1);
+            player.moving = Math.min(1, sp / (cell * SPEED_CELLS));
+            player.tx = player.x; player.ty = player.y;
+          }
+        }
+      } else { slideV.x = 0; slideV.y = 0; }
+      if (ter === 3){
+        const dv = DIRS[currentDir[wIdx(cellOfX(player.x), cellOfY(player.y))]];
+        if (dv){ moveAxis(dv[0] * cell * CURRENT_SPEED * dt, 0, 0); moveAxis(0, dv[1] * cell * CURRENT_SPEED * dt, 1); player.tx = player.x; player.ty = player.y; }
+      }
+    }
+
     // le bond : on avance sur l'arc, sans collision, jusqu'à l'arrivée
     if (jump){
       jump.t += dt;
@@ -2032,10 +2137,19 @@ const BIOMES = [
   { style: 'caverne', amb: 0.68, spore: [240, 200, 120], stone: '#6A5A49', floor: '#43372B', face: '#4A3D31', dark: [10, 6, 4], moss: [120, 200, 170], vein: null },
   { style: 'mine',    amb: 0.50, spore: [170, 182, 188], stone: '#6A7A83', floor: '#20292C', face: '#6B4F34', dark: [3, 8, 13],  moss: [150, 150, 140], vein: null },
   { style: 'cendre',  amb: 0.40, spore: [255, 150, 80],  stone: '#38333C', floor: '#1F1A1E', face: '#27222B', dark: [16, 4, 4], moss: [255, 110, 50],  vein: '#FF7A3C' },
+  { style: 'dunes',   amb: 0.28, spore: [240, 222, 170], stone: '#8E6C3E', floor: '#E4CF9E', face: '#6B4D2A', dark: [34, 20, 8], moss: [200, 170, 110], vein: null },
+  { style: 'glacier', amb: 0.32, spore: [225, 242, 255], stone: '#E3F2F9', floor: '#6F9FBE', face: '#A7C9DE', dark: [6, 16, 28], moss: [200, 230, 245], vein: null },
+  { style: 'citerne', amb: 0.50, spore: [150, 200, 210], stone: '#4C6A66', floor: '#1F3B45', face: '#35514F', dark: [2, 10, 14], moss: [80, 170, 150],  vein: null },
+  { style: 'scriptorium', amb: 0.44, spore: [255, 225, 170], stone: '#6B4A32', floor: '#5A2B2B', face: '#8A6038', dark: [14, 7, 3], moss: [200, 150, 80], vein: null },
+  { style: 'jardin',  amb: 0.46, spore: [200, 240, 140], stone: '#4B5B3A', floor: '#243A22', face: '#3A2E1E', dark: [3, 10, 4], moss: [110, 180, 90],  vein: null },
 ];
 let layerC = null, lightC = null, layerDirty = true;
 let mossSpots = [], glowSpots = [], lightSpots = [];
-let fixedE = new Set();      // passages étayés (Le Puits) : ils ne se referment jamais
+let fixedE = new Set();
+let special = null;          // terrain par case : 1 lent (sable, ronces), 2 glace, 3 courant
+let currentDir = null, currentCells = [];
+let slideV = { x: 0, y: 0 };
+const CURRENT_SPEED = 1.7;   // cases/s, la poussée d'un courant      // passages étayés (Le Puits) : ils ne se referment jamais
 const texCache = [];
 function biomeIdx(){ return S().biome % BIOMES.length; }
 
@@ -2096,8 +2210,8 @@ function getTex(b){
   if (!texCache[b]){
     const B = BIOMES[b];
     texCache[b] = {
-      stone: makeTex(B.stone, 11 + b * 7, { blobs: B.style === 'caverne' ? 52 : 34, cracks: { galerie: 5, caverne: 2, mine: 4, cendre: 9 }[B.style], vein: B.vein }),
-      floor: makeTex(B.floor, 29 + b * 5, { blobs: B.style === 'caverne' ? 46 : 24, cracks: { galerie: 3, caverne: 0, mine: 1, cendre: 6 }[B.style], vein: B.style === 'cendre' ? '#FF7A3C' : null }),
+      stone: makeTex(B.stone, 11 + b * 7, { blobs: B.style === 'caverne' ? 52 : 34, cracks: { galerie: 5, caverne: 2, mine: 4, cendre: 9, dunes: 1, glacier: 6, citerne: 3, scriptorium: 0, jardin: 2 }[B.style], vein: B.vein }),
+      floor: makeTex(B.floor, 29 + b * 5, { blobs: B.style === 'caverne' ? 46 : 24, cracks: { galerie: 3, caverne: 0, mine: 1, cendre: 6, dunes: 0, glacier: 4, citerne: 2, scriptorium: 0, jardin: 1 }[B.style], vein: B.style === 'cendre' ? '#FF7A3C' : null }),
       face:  makeTex(B.face,  53 + b * 3, { blobs: 18, cracks: B.style === 'mine' ? 0 : 2, streaks: true }),
     };
   }
@@ -2141,6 +2255,75 @@ function floorDecor(g, st, cx, cy, rx, ry, B){
     g.fillStyle = 'rgba(255,255,255,0.4)';
     for (const k of [0.34, 0.64]){
       if (horiz) g.fillRect(rx, ry + cell * k, cell, 0.6); else g.fillRect(rx + cell * k, ry, 0.6, cell);
+    }
+  } else if (st === 'dunes'){
+    const sp = special ? special[wIdx(cx, cy)] : 0;
+    g.strokeStyle = sp === 1 ? 'rgba(110,75,30,0.3)' : 'rgba(120,90,40,0.16)'; g.lineWidth = 1;
+    const ph = d * 6;
+    for (let k = 0; k < (sp === 1 ? 4 : 2); k++){
+      const y = ry + cell * (0.22 + k * 0.2);
+      g.beginPath(); g.moveTo(rx, y);
+      for (let t = 1; t <= 6; t++) g.lineTo(rx + cell * t / 6, y + Math.sin(t * 1.3 + ph + k) * cell * 0.04);
+      g.stroke();
+    }
+    if (sp === 1){                                   // sable meuble : un monticule qui ralentit
+      const gr = g.createRadialGradient(rx + cell * 0.5, ry + cell * 0.55, 1, rx + cell * 0.5, ry + cell * 0.55, cell * 0.55);
+      gr.addColorStop(0, 'rgba(150,105,45,0.42)'); gr.addColorStop(1, 'rgba(150,105,45,0)');
+      g.fillStyle = gr; g.fillRect(rx, ry, cell, cell);
+      g.fillStyle = 'rgba(255,240,200,0.4)'; g.fillRect(rx + cell * 0.3, ry + cell * 0.38, 2, 1.4); g.fillRect(rx + cell * 0.62, ry + cell * 0.6, 2, 1.4);
+    } else if (d > 0.9){ g.fillStyle = 'rgba(90,65,30,0.45)'; g.beginPath(); g.ellipse(rx + cell * 0.6, ry + cell * 0.7, cell * 0.06, cell * 0.04, 0, 0, 6.283); g.fill(); }
+  } else if (st === 'glacier'){
+    const sp = special ? special[wIdx(cx, cy)] : 0;
+    const sh = g.createLinearGradient(rx, ry, rx + cell, ry + cell);
+    sh.addColorStop(0, 'rgba(255,255,255,0.0)'); sh.addColorStop(0.45, 'rgba(255,255,255,' + (sp === 2 ? 0.34 : 0.1) + ')'); sh.addColorStop(0.6, 'rgba(255,255,255,0)');
+    g.fillStyle = sh; g.fillRect(rx, ry, cell, cell);
+    if (sp === 2){                                    // plaque de glace : bleue, lisse, brillante
+      g.fillStyle = 'rgba(170,225,255,0.38)'; g.fillRect(rx, ry, cell, cell);
+      g.strokeStyle = 'rgba(255,255,255,0.7)'; g.lineWidth = 1.2; g.lineCap = 'round';
+      g.beginPath(); g.moveTo(rx + cell * 0.2, ry + cell * 0.78); g.lineTo(rx + cell * 0.45, ry + cell * 0.5); g.moveTo(rx + cell * 0.55, ry + cell * 0.82); g.lineTo(rx + cell * 0.7, ry + cell * 0.62); g.stroke();
+      g.fillStyle = 'rgba(255,255,255,0.9)'; g.fillRect(rx + cell * 0.72, ry + cell * 0.22, 1.6, 1.6); g.fillRect(rx + cell * 0.28, ry + cell * 0.3, 1.3, 1.3);
+    } else if (d < 0.12){
+      g.strokeStyle = 'rgba(120,170,200,0.6)'; g.lineWidth = 1;
+      g.beginPath(); g.moveTo(rx + cell * 0.15, ry + cell * 0.35); g.lineTo(rx + cell * 0.5, ry + cell * 0.55); g.lineTo(rx + cell * 0.8, ry + cell * 0.5); g.stroke();
+    }
+  } else if (st === 'citerne'){
+    const sp = special ? special[wIdx(cx, cy)] : 0;
+    g.strokeStyle = 'rgba(160,220,230,0.2)'; g.lineWidth = 1;
+    for (let k = 0; k < 2; k++){
+      const y = ry + cell * (0.3 + k * 0.38 + d * 0.1);
+      g.beginPath(); g.arc(rx + cell * (0.3 + k * 0.3), y, cell * 0.18, 0.2, 2.2); g.stroke();
+    }
+    g.fillStyle = 'rgba(200,240,250,0.08)'; g.fillRect(rx + cell * 0.1, ry + cell * 0.1, cell * 0.8, 2);
+    if (sp === 3){ g.fillStyle = 'rgba(80,170,190,0.2)'; g.fillRect(rx, ry, cell, cell); currentCells.push({ x: rx, y: ry, dir: currentDir[wIdx(cx, cy)] }); }
+  } else if (st === 'scriptorium'){
+    g.strokeStyle = 'rgba(224,184,96,0.32)'; g.lineWidth = 1;
+    g.strokeRect(rx + 2.5, ry + 2.5, cell - 5, cell - 5);
+    g.beginPath(); g.moveTo(rx + cell * 0.5, ry + cell * 0.3); g.lineTo(rx + cell * 0.7, ry + cell * 0.5); g.lineTo(rx + cell * 0.5, ry + cell * 0.7); g.lineTo(rx + cell * 0.3, ry + cell * 0.5); g.closePath(); g.stroke();
+    if (d > 0.93 && lightSpots.length < 12){        // une lampe de lecture, posée au sol
+      const lx = rx + cell * 0.5, ly = ry + cell * 0.55;
+      g.fillStyle = '#B98A3E'; g.fillRect(lx - 2, ly, 4, cell * 0.12); g.beginPath(); g.ellipse(lx, ly, cell * 0.1, cell * 0.07, 0, 0, 6.283); g.fillStyle = '#FFE2A0'; g.fill();
+      lightSpots.push({ x: lx, y: ly, r: cell * 3, a: 0.5, col: [255, 200, 110] });
+    }
+  } else if (st === 'jardin'){
+    const sp = special ? special[wIdx(cx, cy)] : 0;
+    g.strokeStyle = 'rgba(90,150,60,0.55)'; g.lineWidth = 1; g.lineCap = 'round';
+    for (let k = 0; k < 6; k++){
+      const bx = rx + cell * (0.12 + hash01(cx + k, cy * 1.7) * 0.76), by = ry + cell * (0.35 + hash01(cx * 1.3, cy + k) * 0.55);
+      g.beginPath(); g.moveTo(bx, by); g.lineTo(bx + (k % 2 ? 1.5 : -1.5), by - cell * 0.12); g.stroke();
+    }
+    if (sp === 1){                                    // ronces : un fouillis épineux qui ralentit
+      g.strokeStyle = '#1F2E16'; g.lineWidth = 1.6;
+      g.beginPath(); g.moveTo(rx + cell * 0.1, ry + cell * 0.7); g.quadraticCurveTo(rx + cell * 0.4, ry + cell * 0.2, rx + cell * 0.9, ry + cell * 0.6);
+      g.moveTo(rx + cell * 0.15, ry + cell * 0.3); g.quadraticCurveTo(rx + cell * 0.5, ry + cell * 0.8, rx + cell * 0.85, ry + cell * 0.25); g.stroke();
+      g.lineWidth = 1;
+      for (let k = 0; k < 9; k++){ const px = rx + cell * (0.15 + hash01(cx, cy + k) * 0.7), py = ry + cell * (0.2 + hash01(cy, cx + k) * 0.6); g.beginPath(); g.moveTo(px, py); g.lineTo(px + (k % 2 ? 2.4 : -2.4), py - 2.6); g.stroke(); }
+      g.fillStyle = '#B5372F'; g.fillRect(rx + cell * 0.4, ry + cell * 0.42, 1.8, 1.8); g.fillRect(rx + cell * 0.7, ry + cell * 0.55, 1.8, 1.8);
+    } else if (d > 0.82 && d < 0.9){                  // une petite fleur
+      const colr = d > 0.86 ? '#F3E9C9' : '#E8B27D', fx0 = rx + cell * (0.3 + d * 0.3), fy0 = ry + cell * 0.55;
+      g.fillStyle = colr; for (let k = 0; k < 4; k++){ g.beginPath(); g.arc(fx0 + Math.cos(k * 1.57) * 2, fy0 + Math.sin(k * 1.57) * 2, 1.4, 0, 6.283); g.fill(); }
+      g.fillStyle = '#C97B3D'; g.fillRect(fx0 - 0.7, fy0 - 0.7, 1.4, 1.4);
+    } else if (d > 0.95 && lightSpots.length < 10){  // une luciole
+      lightSpots.push({ x: rx + cell * 0.5, y: ry + cell * 0.45, r: cell * 1.8, a: 0.4, col: [200, 240, 120] });
     }
   } else if (st === 'cendre'){
     if (d > 0.4 && d < 0.55){
@@ -2186,6 +2369,75 @@ function wallDecor(g, st, cx, cy, rx, ry, h, below, topH, fh, B){
       for (let k = 0; k < 4; k++){ g.fillRect(rx + cell * (k + 0.5) / 4 - 0.7, fy + fh * 0.2, 1.4, 1.4); g.fillRect(rx + cell * (k + 0.5) / 4 - 0.7, fy + fh * 0.7, 1.4, 1.4); }
     }
     if (h > 0.8){ g.fillStyle = 'rgba(201,123,61,0.75)'; g.fillRect(rx + cell * (0.2 + h * 0.4), ry + cell * 0.3, 2.4, 1.8); g.fillRect(rx + cell * (0.5 + h * 0.2), ry + cell * 0.55, 1.8, 1.4); }
+  } else if (st === 'dunes'){
+    if (below){                                       // frise géométrique (losanges) sur la face
+      const fy = ry + topH;
+      g.strokeStyle = 'rgba(70,45,15,0.55)'; g.lineWidth = 1;
+      for (let k = 0; k < 4; k++){
+        const mx = rx + cell * (k + 0.5) / 4, my = fy + fh * 0.5, rr0 = fh * 0.3;
+        g.beginPath(); g.moveTo(mx, my - rr0); g.lineTo(mx + rr0, my); g.lineTo(mx, my + rr0); g.lineTo(mx - rr0, my); g.closePath(); g.stroke();
+      }
+      g.fillStyle = 'rgba(255,240,200,0.18)'; g.fillRect(rx, fy + 1, cell, 1);
+    }
+    if (!isWall(cx, cy - 1)){ g.fillStyle = 'rgba(255,240,205,0.55)'; g.beginPath(); g.ellipse(rx + cell * 0.5, ry + 1, cell * 0.5, cell * 0.1, 0, Math.PI, 0); g.fill(); }
+  } else if (st === 'glacier'){
+    g.strokeStyle = 'rgba(255,255,255,0.5)'; g.lineWidth = 1;
+    g.beginPath(); g.moveTo(rx + cell * 0.2, ry + topH * 0.3); g.lineTo(rx + cell * 0.55, ry + topH * 0.55); g.lineTo(rx + cell * 0.8, ry + topH * 0.35); g.stroke();
+    if (!isWall(cx, cy - 1)){ g.fillStyle = 'rgba(255,255,255,0.45)'; g.fillRect(rx, ry, cell, 2); }
+    if (below){                                       // stalactites
+      const fy = ry + topH;
+      g.fillStyle = 'rgba(235,248,255,0.92)';
+      for (let k = 0; k < 3; k++){
+        const px = rx + cell * (0.12 + k * 0.33 + hash01(cx + k, cy) * 0.12), tl = fh * (0.5 + hash01(cx, cy + k) * 0.7);
+        g.beginPath(); g.moveTo(px - 2.6, fy); g.lineTo(px + 2.6, fy); g.lineTo(px, fy + tl); g.closePath(); g.fill();
+      }
+    }
+  } else if (st === 'citerne'){
+    if (below){
+      const fy = ry + topH;
+      g.fillStyle = 'rgba(8,36,46,0.5)'; g.fillRect(rx, fy + fh * 0.7, cell, fh * 0.3);                       // la ligne d'eau
+      g.fillStyle = 'rgba(80,170,150,0.5)';
+      for (let k = 0; k < 3; k++){ g.beginPath(); g.ellipse(rx + cell * (0.2 + k * 0.3 + h * 0.08), fy + fh * 0.75, cell * 0.1, fh * 0.22, 0, 0, 6.283); g.fill(); }
+      g.fillStyle = 'rgba(190,235,245,0.7)'; g.fillRect(rx + cell * (0.3 + h * 0.4), fy + fh * 0.1, 1, fh * 0.35);   // une goutte
+    }
+    if (!isWall(cx, cy - 1)){ g.fillStyle = 'rgba(80,170,150,0.4)'; g.beginPath(); g.ellipse(rx + cell * (0.3 + h * 0.4), ry + 1.5, cell * 0.2, 2.2, 0, 0, 6.283); g.fill(); }
+  } else if (st === 'scriptorium'){
+    // étagère : des dos de livres sur la face, des planches sur le dessus
+    const cols = ['#8E2F2F', '#2F5E8E', '#3F7A4A', '#B08A2E', '#6A3F7A', '#C9B48A', '#7A4A2A'];
+    if (below){
+      const fy = ry + topH;
+      g.fillStyle = '#3A2514'; g.fillRect(rx, fy, cell, fh);
+      let x = rx + 1;
+      for (let k = 0; x < rx + cell - 2; k++){
+        const bw = 2 + Math.floor(hash01(cx + k * 1.7, cy) * 3), bh = fh * (0.55 + hash01(cx, cy + k * 2.3) * 0.4);
+        g.fillStyle = cols[Math.floor(hash01(cx * 2.7 + k, cy * 1.9) * cols.length)];
+        g.fillRect(x, fy + fh - bh - 1, bw, bh); g.fillStyle = 'rgba(255,255,255,0.18)'; g.fillRect(x, fy + fh - bh - 1, 1, bh);
+        x += bw + 0.6;
+      }
+      g.fillStyle = 'rgba(0,0,0,0.5)'; g.fillRect(rx, fy + fh - 1, cell, 1.5);
+    }
+    g.strokeStyle = 'rgba(30,18,8,0.35)'; g.lineWidth = 1;
+    for (let k = 1; k < 3; k++){ g.beginPath(); g.moveTo(rx, ry + topH * k / 3); g.lineTo(rx + cell, ry + topH * k / 3); g.stroke(); }
+    if (!isWall(cx, cy - 1) && h > 0.9 && lightSpots.length < 12){
+      const lx = rx + cell * 0.5, ly = ry + cell * 0.3;
+      g.fillStyle = '#B98A3E'; g.fillRect(lx - 1.5, ly, 3, cell * 0.14); g.beginPath(); g.arc(lx, ly, cell * 0.1, 0, 6.283); g.fillStyle = '#FFE2A0'; g.fill();
+      lightSpots.push({ x: lx, y: ly, r: cell * 3, a: 0.55, col: [255, 200, 110] });
+    }
+  } else if (st === 'jardin'){
+    if (!isWall(cx, cy - 1)){
+      for (let k = 0; k < 3; k++){
+        g.fillStyle = k % 2 ? 'rgba(90,150,60,0.85)' : 'rgba(60,120,45,0.9)';
+        g.beginPath(); g.ellipse(rx + cell * (0.2 + k * 0.3), ry + 2, cell * 0.17, cell * 0.1, 0, 0, 6.283); g.fill();
+      }
+    }
+    if (below){                                       // racines qui pendent
+      const fy = ry + topH;
+      g.strokeStyle = 'rgba(70,45,22,0.85)'; g.lineWidth = 1.2;
+      for (let k = 0; k < 3; k++){
+        const px = rx + cell * (0.15 + k * 0.32 + hash01(cx, cy + k) * 0.1);
+        g.beginPath(); g.moveTo(px, fy); g.quadraticCurveTo(px + 2.5, fy + fh * 0.5, px - 1, fy + fh * (0.6 + hash01(cx + k, cy) * 0.4)); g.stroke();
+      }
+    }
   } else if (st === 'cendre'){
     if (h > 0.5){
       const j = (k) => hash01(cx * 2.1 + k, cy * 1.7 - k) * 0.12;
@@ -2225,7 +2477,7 @@ function buildLayer(){
   g.setTransform(DPR, 0, 0, DPR, 0, 0);
   g.clearRect(0, 0, W, H);
   const B = BIOMES[biomeIdx()], tx = getTex(biomeIdx());
-  mossSpots = []; glowSpots = []; lightSpots = [];
+  mossSpots = []; glowSpots = []; lightSpots = []; currentCells = [];
   const st = B.style;
   const span = TEX - CROP;
 
@@ -2240,7 +2492,7 @@ function buildLayer(){
       g.fillStyle = 'rgba(0,0,0,' + (hash01(cx, cy * 5.5) * 0.12).toFixed(3) + ')';
       g.fillRect(rx, ry, cell, cell);
       // joints de dalle (pas dans une grotte, où le sol est naturel)
-      if (st !== 'caverne'){
+      if (st !== 'caverne' && st !== 'dunes' && st !== 'scriptorium' && st !== 'jardin'){
         g.fillStyle = 'rgba(0,0,0,0.3)';
         g.fillRect(rx + cell - 1, ry, 1, cell);
         g.fillRect(rx, ry + cell - 1, cell, 1);
@@ -2940,6 +3192,24 @@ function draw(){
     ctx.fillRect(m.x, m.y + 0.5, m.w, 2.2);
   }
 
+  // courants des Citernes : des chevrons clairs qui glissent dans le sens de l'eau
+  if (currentCells.length){
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.lineWidth = Math.max(1.4, cell * 0.07);
+    for (const cc of currentCells){
+      if (wall[wIdx(Math.round((cc.x - originX) / cell), Math.round((cc.y - originY) / cell))]) continue;
+      const dv = DIRS[cc.dir]; if (!dv) continue;
+      for (let k = 0; k < 2; k++){
+        const ph = reducedMotion ? 0.5 : ((tnow * 0.8 + k * 0.5) % 1);
+        const px = cc.x + cell * 0.5 + dv[0] * cell * (ph - 0.5) * 0.9, py = cc.y + cell * 0.5 + dv[1] * cell * (ph - 0.5) * 0.9;
+        ctx.strokeStyle = 'rgba(190,240,250,' + (Math.sin(ph * Math.PI) * 0.6).toFixed(3) + ')';
+        const ax = dv[0], ay = dv[1], sz = cell * 0.16;
+        ctx.beginPath();
+        ctx.moveTo(px - ax * sz - ay * sz, py - ay * sz + ax * sz); ctx.lineTo(px + ax * sz * 0.4, py + ay * sz * 0.4); ctx.lineTo(px - ax * sz + ay * sz, py - ay * sz - ax * sz);
+        ctx.stroke();
+      }
+    }
+  }
+
   // veines de lave qui pulsent, cristaux et champignons qui scintillent
   if (glowSpots.length || lightSpots.length){
     ctx.globalCompositeOperation = 'lighter';
@@ -3161,6 +3431,7 @@ function loop(now){
 // ---------- Lancement ----------
 (async function init(){
   resize();
+  setStage(0);
   newMaze();          // le labyrinthe vit déjà derrière l'écran titre
   makeSpores();
   initAudio();
