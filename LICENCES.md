@@ -13,3 +13,5 @@
 **Polices** (`polices/`) : Cinzel (Natanael Gama) et Alegreya (Juan Pablo del Peral), SIL Open Font License 1.1, sous-ensemble latin, récupérées sur Google Fonts le 07/11/2026.
 
 **Mineur** (`sprites/`) : images rendues dans Blender par script (`projets/les-ruines/blender/mineur.py` de l'atelier), création Fervia, aucun élément tiers.
+
+**Carte du monde** (`carte.webp`) : illustration générée pour Fervia le 08/11/2026 (Higgsfield, modèle Nano Banana Pro, travail `e707d9b1`), puis retouchée (étiquettes anglaises effacées, réduite à 900 px de large). Création Fervia par image générée par IA ; source pleine taille dans `projets/les-ruines/references/` de l'atelier.
