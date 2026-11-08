@@ -178,12 +178,15 @@
   .boon small{display:block;font-family:'Cinzel',Georgia,serif;font-size:10.5px;letter-spacing:.2em;text-transform:uppercase;color:var(--c,#C97B3D)}
   .boon b{display:block;margin-top:3px;font-size:19px;font-weight:500}
   .boon span{display:block;margin-top:2px;font-size:14.5px;color:rgba(240,234,217,.72);line-height:1.3}
-  #boonHud{position:fixed;top:max(46px, calc(env(safe-area-inset-top) + 28px));left:16px;z-index:6;display:flex;flex-direction:column;gap:4px;pointer-events:none;opacity:0;transition:opacity .4s ease}
+  /* les bonus pris : en bas à gauche, dans la bande du pouce, jamais sur le labyrinthe (retour du 08/11 : empilés sous le casque, ils débordaient) */
+  #boonHud{position:fixed;bottom:max(14px, calc(env(safe-area-inset-bottom) + 8px));left:14px;z-index:6;display:flex;flex-wrap:wrap-reverse;gap:4px;max-width:118px;pointer-events:none;opacity:0;transition:opacity .4s ease}
   #hud.visible ~ #boonHud{opacity:1}
   #boonHud i{width:20px;height:20px;border-radius:50%;border:1.5px solid var(--c);background:rgba(14,22,17,.85);color:var(--c);font:600 10px/17px 'Cinzel',Georgia,serif;text-align:center;font-style:normal}
   #helmet.spare::after{content:'+1';position:absolute;right:-14px;top:-4px;font:600 10px 'Cinzel',Georgia,serif;color:var(--copper-light)}
-  #mapBtn{position:fixed;top:max(66px, calc(env(safe-area-inset-top) + 50px));right:14px;z-index:6;min-width:44px;min-height:44px;padding:0 12px;border-radius:22px;border:1px solid rgba(240,234,217,.28);background:rgba(14,22,17,.7);color:var(--ivory);font:600 11px 'Cinzel',Georgia,serif;letter-spacing:.12em;text-transform:uppercase;display:none}
-  body.world #mapBtn{display:block}
+  /* la carte : une icône à gauche du son, dans le bandeau du haut (avant le 08/11 le bouton « Carte » mordait sur le labyrinthe) */
+  #mapBtn{position:fixed;top:max(14px, env(safe-area-inset-top));right:64px;z-index:6;width:42px;height:42px;border-radius:50%;border:1px solid rgba(201,123,61,.4);background:rgba(28,38,32,.6);color:var(--copper-light);display:none;align-items:center;justify-content:center;padding:0;cursor:pointer}
+  body.world #mapBtn{display:flex}
+  #mapBtn svg{width:22px;height:22px}
   #worldmap h2{font-family:'Cinzel',Georgia,serif;font-weight:600;font-size:20px;letter-spacing:.16em;text-transform:uppercase;color:var(--copper-light);margin-bottom:10px}
   #mapCanvas{border-radius:14px;border:1px solid rgba(240,234,217,.2)}
   #menuBtns{margin-top:20px;display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
@@ -265,7 +268,7 @@
 <div id="boonHud"></div>
 
 <button id="mute" aria-label="Volume">♪</button>
-<button id="mapBtn" aria-label="Carte">Carte</button>
+<button id="mapBtn" aria-label="Carte"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M3 6l6-2 6 2 6-2v14l-6 2-6-2-6 2z"/><path d="M9 4v14M15 6v14"/></svg></button>
 
 <!-- Écran titre -->
 <div id="menu" class="screen">
@@ -352,7 +355,9 @@ const GAME_URL      = 'https://design-effect.github.io/les-ruines/';
 const PICK_FIRST    = 10;    // première pioche (s)
 const PICK_RESPAWN  = 16;    // délai moyen entre pioches (s), après la fin de la fenêtre
 const PICK_LIFE     = 9;     // durée de la pioche au sol (s)
-const PICK_DURATION = 7;     // fenêtre de possession : casse illimitée (s)
+const PICK_DURATION = 7;     // (avant le lot 13 : fenêtre de possession)
+const PICK_USES     = 6;     // lot 13 : la pioche est toujours en main, 6 coups (ennemi frappé ou mur cassé)
+const PICK_REGEN    = 6;     // elle s'aiguise toute seule : un coup rendu toutes les 6 s
 const DIG_HOLD      = 0.1;   // poussée maintenue contre le mur pour creuser (s)
 const STAGE_PTS     = 150;   // bonus de passage (× numéro de l'étage)
 const GRACE         = 1.6;   // répit à l'arrivée dans un étage : ennemis figés (s)
@@ -389,7 +394,7 @@ const STYLES = [
 // ---------- Les bonus (lot 9) : un choix à chaque passage, trois cartes visibles, rien au hasard ----------
 const BOONS = {
   casque:   { fam: 'def', nom: 'Casque de rechange', txt: 'un second casque, rendu à chaque étage', g: 'C' },
-  pioche:   { fam: 'def', nom: 'Pioche durable',     txt: '+4 s de pioche à chaque prise',          g: 'P' },
+  pioche:   { fam: 'def', nom: 'Pioche durable',     txt: '+3 coups avant qu\u2019elle s\u2019émousse',  g: 'P' },
   velours:  { fam: 'def', nom: 'Pas de velours',     txt: 'les passages s\u2019annoncent plus tôt', g: 'V' },
   semelles: { fam: 'mov', nom: 'Semelles légères',   txt: 'tu cours 8 % plus vite',                  g: 'S' },
   souffle:  { fam: 'mov', nom: 'Souffle long',       txt: 'les bonus durent 1,5 fois plus',          g: 'B' },
@@ -497,7 +502,7 @@ function bmeta(t){ return FX_META[t] || CASQUE_META; }
 const player = { x:0, y:0, tx:0, ty:0, rad:8, walk:0, fx:1, fy:0, blinkT:2, moving:0 };
 let treasures = [], particles = [], rings = [], texts = [], spores = [];
 // la pioche : fenêtre rare de casse illimitée sur les connecteurs fermés
-let pick = null, hasPick = false, pickT = PICK_FIRST, pickTime = 0, digT = 0;
+let pick = null, hasPick = false, pickT = PICK_FIRST, pickTime = 0, digT = 0, pickUses = PICK_USES, pickRegenT = PICK_REGEN;
 let massifShown = false, pickHintShown = false;
 // les bonus : un seul au sol à la fois, trois effets qui peuvent se cumuler
 let bonus = null, bonusT = BONUS_FIRST, bonusBag = [], lastBonus = null;
@@ -1139,6 +1144,17 @@ function nearMiss(){
   buzz(20);
 }
 function pickDur(){ return PICK_DURATION + (boons.pioche ? 4 : 0); }
+function pickMax(){ return PICK_USES + (boons.pioche ? 3 : 0); }
+function refillPick(){ pickUses = pickMax(); hasPick = true; pickRegenT = PICK_REGEN; }
+// un coup donné use la pioche ; à zéro elle est émoussée (toujours en main, elle ne frappe plus)
+function usePick(){
+  pickUses = Math.max(0, pickUses - 1);
+  if (pickUses > 0) return;
+  hasPick = false; digT = 0;
+  addText(player.x, player.y - 30, 'pioche émoussée');
+  burst(player.x, player.y, reducedMotion ? 3 : 7, 90, '#A7B8BD');
+  playPickLost();
+}
 function comboWin(){ return COMBO_WINDOW + (boons.oeil ? 1.5 : 0); }
 function fxMax(k){ return FX_META[k].time * (boons.souffle ? 1.5 : 1); }
 // trois cartes, une par famille : la première que tu n'as pas encore (ordre fixe)
@@ -1266,18 +1282,40 @@ function setStageZone(id){
   curStage.scarab = [0, 1, 2, 2, 3, 3][z.diff]; curStage.garde = [0, 0, 1, 2, 2, 3][z.diff];
   if (z.boss){ curStage.scarab = 0; curStage.garde = 0; }
 }
-// les portes d'une zone : dans des salles éloignées du départ, au hasard de sa graine
+// les portes d'une zone : ENCASTRÉES dans un mur qui ne bouge jamais (le bord du labyrinthe), au fond d'une salle éloignée du départ.
+// On n'y entre qu'en poussant contre elle : on ne passe plus par une porte sans le vouloir (retour d'AbduLlah, 08/11).
+let pushX = 0, pushY = 0;
+function doorWallOf(i, j, used){
+  for (const dv of [[0, -1], [-1, 0], [1, 0], [0, 1]]){          // le mur du haut d'abord : la vue de trois quarts montre sa face
+    const ni = i + dv[0], nj = j + dv[1];
+    const outside = ni < 0 || nj < 0 || ni >= Rx || nj >= Ry || !roomMask[rid(ni, nj)];
+    if (!outside) continue;                                     // entre deux salles, le passage peut s'ouvrir : pas de porte là
+    const wx = 2 * i + 1 + dv[0], wy = 2 * j + 1 + dv[1];
+    if (vaultAdj(wx, wy) || used.has(wx + ',' + wy)) continue;
+    return { cx: wx, cy: wy, rx: 2 * i + 1, ry: 2 * j + 1, dx: dv[0], dy: dv[1] };
+  }
+  return null;
+}
 function placeZoneDoors(id){
   zdoors = [];
   const z = WORLD.zones[id], sr = startRoom(), d = roomDistances(sr[0], sr[1]), rooms = [];
   for (let j = 0; j < Ry; j++) for (let i = 0; i < Rx; i++){
     if (!roomMask[rid(i, j)] || (i === sr[0] && j === sr[1]) || (vaultPick && i === vaultPick.i && j === vaultPick.j) || d[rid(i, j)] < 0) continue;
+    if (!doorWallOf(i, j, new Set())) continue;
     rooms.push([i, j]);
   }
   rooms.sort((a, b) => d[rid(b[0], b[1])] - d[rid(a[0], a[1])]);
   const far = rooms.slice(0, Math.max(z.doors.length * 3, 6));
   for (let k = far.length - 1; k > 0; k--){ const m = Math.floor(Math.random() * (k + 1)); const t = far[k]; far[k] = far[m]; far[m] = t; }
-  z.doors.forEach((to, k) => { const r = far[k]; if (r) zdoors.push({ cx: 2 * r[0] + 1, cy: 2 * r[1] + 1, to, msgT: -9 }); });
+  const used = new Set(), usedRoom = new Set();
+  let k = 0;
+  for (const to of z.doors){
+    while (k < far.length && usedRoom.has(far[k][0] + ',' + far[k][1])) k++;
+    const r = far[k++]; if (!r) break;
+    const w = doorWallOf(r[0], r[1], used); if (!w) continue;
+    used.add(w.cx + ',' + w.cy); usedRoom.add(r[0] + ',' + r[1]);
+    zdoors.push(Object.assign(w, { to, msgT: -9 }));
+  }
 }
 function enterZone(id, from){
   worldMode = true; world.cur = id; world.zones[id].seen = true;
@@ -1291,15 +1329,15 @@ function enterZone(id, from){
     vault.open = true; wall[wIdx(vault.dx, vault.dy)] = 0;
     if (st.vaultDone) treasures = treasures.filter((t) => t.kind !== 'joyau');
   }
-  pick = null; hasPick = false; pickT = PICK_FIRST; pickTime = 0; digT = 0; swing = null;
+  pick = null; refillPick(); pickT = PICK_FIRST; pickTime = 0; digT = 0; swing = null;
   bonus = null; bonusT = BONUS_FIRST * 0.6; bonusBag = []; lastBonus = null;
   for (const k in fx){ fx[k] = 0; fxTickT[k] = 0; }
   exitP = null; stageGot = st.unlocked ? Math.max(st.got, z.quota) : st.got; stageT = 0; jump = null; bondN = 0;
   helmet = true; helmetExtra = boons.casque ? 1 : 0; invuln = 0; combo = 0; comboTimer = 0;
   const dr = from ? zdoors.find((d) => d.to === from) : null;
-  if (dr){ zoneEntry = { x: ctrX(dr.cx), y: ctrY(dr.cy) }; zdoorLock = zdoors.indexOf(dr); }
+  if (dr){ zoneEntry = { x: ctrX(dr.rx), y: ctrY(dr.ry) }; zdoorLock = zdoors.indexOf(dr); }
   else { const sr = startRoom(); zoneEntry = { x: ctrX(2 * sr[0] + 1), y: ctrY(2 * sr[1] + 1) }; zdoorLock = -1; }
-  player.x = player.tx = zoneEntry.x; player.y = player.ty = zoneEntry.y; player.fx = 0; player.fy = -1;
+  player.x = player.tx = zoneEntry.x; player.y = player.ty = zoneEntry.y; player.fx = dr ? -dr.dx : 0; player.fy = dr ? -dr.dy : -1;
   waveTimer = 3; spawnT = 0.6; portalLock = -1; boostWas = false; tele = null; bossWaveN = 0;
   layerDirty = true; makeSpores(); spawnEnemies(); grace = z.boss && !st.down ? COLOSSE_GRACE : GRACE;
   showBanner(z.nom.toUpperCase(), z.boss && st.down ? 'le colosse est tombé' : (z.hint != null ? z.hint : (STYLES[z.style].hint || '')));
@@ -1317,14 +1355,19 @@ function worldQuota(){
 }
 function updateZoneDoors(){
   if (!worldMode || !zdoors.length || jump) return;
-  if (zdoorLock >= 0){ const l = zdoors[zdoorLock]; if (l && Math.hypot(player.x - ctrX(l.cx), player.y - ctrY(l.cy)) > cell * 0.8) zdoorLock = -1; }
+  // en arrivant, la porte d'où l'on vient dort tant qu'on n'a pas quitté sa salle (le doigt pousse peut-être encore)
+  if (zdoorLock >= 0){ const l = zdoors[zdoorLock]; if (l && Math.hypot(player.x - ctrX(l.rx), player.y - ctrY(l.ry)) > cell * 1.3) zdoorLock = -1; }
   for (let k = 0; k < zdoors.length; k++){
     const d = zdoors[k];
-    if (k === zdoorLock || Math.hypot(player.x - ctrX(d.cx), player.y - ctrY(d.cy)) > cell * 0.34) continue;
+    if (k === zdoorLock) continue;
+    const inRoom = cellOfX(player.x) === d.rx && cellOfY(player.y) === d.ry;
+    const pushing = (pushX * d.dx + pushY * d.dy) > 0.6;
+    const close = Math.hypot(player.x - ctrX(d.cx), player.y - ctrY(d.cy)) < cell * 0.82;
+    if (!inRoom || !pushing || !close) continue;
     const b = doorBlock(world.cur, d.to);
-    if (!b) travel(d.to);
-    else if (tnow - d.msgT > 2.5){
-      d.msgT = tnow; addText(ctrX(d.cx), ctrY(d.cy) - 26, b); snd('metalB', 0.4, 0.8);
+    if (!b){ travel(d.to); return; }
+    if (tnow - d.msgT > 2.5){
+      d.msgT = tnow; addText(ctrX(d.cx), ctrY(d.cy) - 26, b); snd('metalB', 0.4, 0.8); puff(ctrX(d.cx), ctrY(d.cy), 1, '#8A9B90', true);
       if (WORLD.zones[d.to].boss && !vaultHint.sceau){ vaultHint.sceau = true; addText(ctrX(d.cx), ctrY(d.cy) - 44, 'un sceau dort dans chaque chambre forte'); }
     }
   }
@@ -1340,7 +1383,7 @@ function respawnZone(){
   if (score > best){ best = Math.floor(score); saveBest(best); }
   player.x = player.tx = zoneEntry.x; player.y = player.ty = zoneEntry.y;
   helmet = true; helmetExtra = boons.casque ? 1 : 0; invuln = INVULN; grace = GRACE; combo = 0; comboTimer = 0; jump = null; swing = null;
-  tele = null; waveTimer = 3; hasPick = false; for (const k in fx) fx[k] = 0;
+  tele = null; waveTimer = 3; refillPick(); for (const k in fx) fx[k] = 0;
   spawnEnemies();
   if (bossZone() && !world.zones[world.cur].down) grace = COLOSSE_GRACE;
   state = 'playing'; ui.hud.classList.add('visible'); flash = 0;
@@ -1353,7 +1396,13 @@ function drawZoneDoors(){
   if (!worldMode || !zdoors.length) return;
   for (const d of zdoors){
     const dest = WORLD.zones[d.to], big = !!dest.boss, open = !doorBlock(world.cur, d.to);
-    const x = ctrX(d.cx), y = ctrY(d.cy), w = cell * (big ? 0.8 : 0.62), h = cell * (big ? 0.98 : 0.86), pu = 0.5 + 0.5 * Math.sin(tnow * 2.4 + d.cx);
+    // la porte est dans la case de mur ; dans le mur du haut elle se pose sur sa face avant, côté salle
+    const w = cell * (big ? 0.8 : 0.66), h = cell * (big ? 0.98 : 0.9), pu = 0.5 + 0.5 * Math.sin(tnow * 2.4 + d.cx);
+    const x = ctrX(d.cx) + d.dx * cell * 0.08, y = ctrY(d.cy) + (d.dy === -1 ? cell * 0.5 - h / 2 : d.dy * cell * 0.08);
+    // le seuil côté salle : une lueur au sol qui dit « pousse ici »
+    const sx = ctrX(d.cx) - d.dx * cell * 0.55, sy = ctrY(d.cy) - d.dy * cell * 0.55;
+    ctx.fillStyle = open ? 'rgba(255,214,140,' + (0.22 + 0.12 * pu).toFixed(3) + ')' : 'rgba(170,190,196,0.12)';
+    ctx.beginPath(); ctx.ellipse(sx, sy, cell * (d.dx ? 0.16 : 0.34), cell * (d.dx ? 0.34 : 0.16), 0, 0, Math.PI * 2); ctx.fill();
     const B = BIOMES[dest.style];
     const gl = ctx.createRadialGradient(x, y, 0, x, y, cell * 1.2);
     gl.addColorStop(0, open ? 'rgba(255,214,140,' + (0.34 + 0.14 * pu).toFixed(3) + ')' : 'rgba(150,170,180,0.14)'); gl.addColorStop(1, 'rgba(255,214,140,0)');
@@ -1371,7 +1420,8 @@ function drawZoneDoors(){
         ctx.lineWidth = 1.6; ctx.strokeStyle = got ? '#FFF6DC' : s.c; ctx.stroke();
       });
     }
-    ctx.font = "500 9px 'Cinzel', Georgia, serif"; ctx.textAlign = 'center'; ctx.fillStyle = 'rgba(240,234,217,0.85)'; ctx.fillText(dest.nom.replace(/^(La |Le |Les )/, '').toUpperCase(), x, y + h * 0.5 + 11);
+    ctx.font = "500 9px 'Cinzel', Georgia, serif"; ctx.textAlign = 'center'; ctx.fillStyle = 'rgba(240,234,217,0.85)'; const nm = dest.nom.replace(/^(La |Le |Les )/, '').toUpperCase(), hw = ctx.measureText(nm).width / 2 + 3;
+    ctx.fillText(nm, Math.max(hw, Math.min(W - hw, x - d.dx * cell * 0.35)), y + h * 0.5 + 11);   // le nom reste dans l'écran
   }
 }
 // l'écran de carte : l'illustration du royaume (Emma, 08/11), les noms en plaques posées par-dessus, la brume sur l'inconnu
@@ -1510,7 +1560,7 @@ function nextStage(){
   newMaze();
   treasures = []; particles = []; rings = []; texts = [];
   setupVault();
-  pick = null; hasPick = false; pickT = PICK_FIRST; pickTime = 0; digT = 0; swing = null;
+  pick = null; refillPick(); pickT = PICK_FIRST; pickTime = 0; digT = 0; swing = null;
   bonus = null; bonusT = BONUS_FIRST * 0.6; bonusBag = []; lastBonus = null;
   for (const k in fx){ fx[k] = 0; fxTickT[k] = 0; }
   exitP = null; stageGot = 0; stageT = 0; jump = null; bondN = 0; helmet = true; helmetExtra = boons.casque ? 1 : 0; invuln = 0;
@@ -1683,6 +1733,7 @@ function updateEnemies(dt){
       if (Math.hypot(e.x - player.x, e.y - player.y) < player.rad * 0.85 + enemyRad(e)){
         if (invuln > 0) continue;
         if (hasPick){                                   // la pioche est une arme
+          usePick();
           if (e.kind === 'scarab') squashEnemy(e, 'brisé', SMASH_PTS);
           else { e.stun = STUN_PICK; burst(e.x, e.y, 8, 140, '#B8AFA2'); addText(e.x, e.y - 16, 'assommé', true); playSmash(); buzz(30); }
           continue;
@@ -1861,11 +1912,13 @@ function hitEnemyWithPick(e){
   else { e.stun = Math.max(e.stun, STUN_PICK); burst(e.x, e.y, 8, 140, '#B8AFA2'); addText(e.x, e.y - 16, 'assommé', true); playSmash(); buzz(30); }
 }
 function swingHit(){
-  if (swing.kind === 'wall' && isBreakable(swing.a, swing.b)) breakWall(swing.a, swing.b);
+  let hit = false;
+  if (swing.kind === 'wall' && isBreakable(swing.a, swing.b)){ breakWall(swing.a, swing.b); hit = true; }
   for (const e of enemies){
     if (!e.alive) continue;
-    if (Math.hypot(e.x - player.x, e.y - player.y) < cell * 1.5) hitEnemyWithPick(e);
+    if (Math.hypot(e.x - player.x, e.y - player.y) < cell * 1.5){ hitEnemyWithPick(e); hit = true; }
   }
+  if (hit) usePick();                              // un coup qui touche use la pioche, un coup dans le vide non
 }
 function updateSwing(dt){
   if (swing){
@@ -2349,7 +2402,7 @@ function startGame(mode, fresh){
   player.fx = 0; player.fy = -1; player.walk = 0;
   waveTimer = 3;
   spawnT = 0.6; portalLock = -1; boostWas = false;
-  pick = null; hasPick = false; pickT = PICK_FIRST; pickTime = 0; digT = 0;
+  pick = null; pickT = PICK_FIRST; pickTime = 0; digT = 0; refillPick();
   massifShown = false; pickHintShown = false;
   state = 'playing';
   ui.menu.classList.add('hidden');
@@ -2675,9 +2728,9 @@ function update(dt){
 
     // déplacement plafonné : les détours coûtent du temps
     const px = player.x, py = player.y;
-    let dirx = 0, diry = 0;
+    let dirx = 0, diry = 0; pushX = 0; pushY = 0;
     if (dist > 0.5){
-      dirx = dx / dist; diry = dy / dist;
+      dirx = dx / dist; diry = dy / dist; pushX = dirx; pushY = diry;   // l'intention du doigt (pousser contre une porte)
       const terNow = terrainAt(player.x, player.y);
       const step = Math.min(dist, cell * SPEED_CELLS * (boons.semelles ? 1.08 : 1) * (fx.foulee > 0 ? FOULEE_MULT : 1) * (terNow === 1 ? S().slowMul : (terNow === 4 ? BOOST_MUL : 1)) * dt);
       moveAxis(dirx * step, 0, 0);
@@ -2875,28 +2928,20 @@ function update(dt){
       }
     }
 
-    // la pioche : rare, une seule à la fois (au sol OU en main)
-    if (!hasPick && !pick){
+    // la pioche : toujours en main ; elle s'aiguise toute seule, un coup à la fois (lot 13)
+    if (pickUses < pickMax()){
+      pickRegenT -= dt;
+      if (pickRegenT <= 0){
+        pickRegenT = PICK_REGEN; pickUses++;
+        if (!hasPick){ hasPick = true; addText(player.x, player.y - 30, 'pioche aiguisée'); }
+        burst(player.x, player.y - cell * 0.3, reducedMotion ? 2 : 4, 50, '#D8E4E8', 'spark');
+        snd('mclick', 0.3, 1.45); snd('tick1', 0.2, 1.7, 0.04);
+      }
+    } else pickRegenT = PICK_REGEN;
+    // au sol, de temps en temps : une pioche neuve (tous les coups rendus), seulement si la tienne est entamée
+    if (!pick && pickUses < pickMax()){
       pickT -= dt;
       if (pickT <= 0) spawnPick();
-    }
-    if (hasPick){
-      pickTime -= dt;
-      // alerte : tics métalliques qui s'accélèrent sur la dernière 1,5 s
-      if (pickTime > 0 && pickTime < 1.5){
-        pickTickT -= dt;
-        if (pickTickT <= 0){
-          playPickTick();
-          pickTickT = 0.07 + (pickTime / 1.5) * 0.22;
-        }
-      }
-      if (pickTime <= 0){
-        hasPick = false; digT = 0; swing = null;
-        addText(player.x, player.y - 30, 'la pioche se brise…');
-        burst(player.x, player.y, reducedMotion ? 3 : 7, 90, '#A7B8BD');
-        playPickLost();
-        pickT = PICK_RESPAWN * (0.8 + Math.random() * 0.5);
-      }
     }
     if (pick){
       pick.life -= dt;
@@ -2907,9 +2952,9 @@ function update(dt){
         pick = null;
         pickT = PICK_RESPAWN * (0.8 + Math.random() * 0.5);
       } else if (Math.hypot(pick.x - player.x, pick.y - player.y) < player.rad + cell * 0.3){
-        hasPick = true; pickTime = pickDur(); pickTickT = 0;
+        refillPick(); pickTickT = 0;
         massifShown = false; digT = 0;
-        addText(pick.x, pick.y - 12, 'pioche !', true);
+        addText(pick.x, pick.y - 12, 'pioche neuve !', true);
         if (!pickHintShown){
           pickHintShown = true;
           addText(player.x, player.y + 30, 'pousse contre un mur fragile');
@@ -3776,7 +3821,7 @@ function drawFrontBack(S, ph, mv, back){
   }
   drawHelmet(S, 0, -S * 0.9, S * 0.39, 0);
   if (helmet && !back) drawLamp(0, -S * 1.04, S * 0.075);
-  if (hasPick){
+  {                                              // la pioche, toujours en main (lot 13)
     const k = back ? -1 : 1;                       // la main qui tient la pioche : à droite de l'écran de face, à gauche de dos
     drawHeldPick(S, back ? 'up' : 'down', k * S * 0.31, -S * 0.3);
   }
@@ -3826,7 +3871,7 @@ function drawSide(S, ph, mv){
   drawHelmet(S, S * 0.03, -S * 0.9, S * 0.41, 1);
   if (helmet) drawLamp(S * 0.33, -S * 1.0, S * 0.075);
   ctx.restore();
-  if (hasPick) drawHeldPick(S, 'side', S * 0.12, -S * 0.3);
+  drawHeldPick(S, 'side', S * 0.12, -S * 0.3);
 }
 // Le mineur rendu dans Blender (lot 11) : 8 directions, 8 images de course, repos, pioche en main, avec et sans casque.
 // Les images sont dans sprites/ ; tant qu'une image n'est pas chargée, l'ancien dessin en code prend le relais.
@@ -3846,13 +3891,13 @@ function drawSpriteChar(S){
   const nc = helmet ? '' : '-nc';
   let base = moving ? 'run' : 'idle';
   const striking = !!swing;
-  if (hasPick && !striking) base = 'pioche';
+  if (!striking) base = 'pioche';                  // un mineur a toujours sa pioche (lot 13)
   const im = spriteImg(base + nc, d, base === 'idle' ? 0 : (moving ? f : 0));
   if (!im) return false;
   const D = S * 1.9;
   ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
   ctx.drawImage(im, -D / 2, -0.755 * D, D, D);
-  if (hasPick && striking){                       // le coup : la pioche se dessine en code, dans la main du mineur
+  if (striking){                                  // le coup : la pioche se dessine en code, dans la main du mineur
     ctx.save(); ctx.lineJoin = 'round'; ctx.lineCap = 'round';
     const v = player.view;
     if (v === 'side'){ ctx.scale(player.sx, 1); drawHeldPick(S, 'side', S * 0.12, -S * 0.34); }
@@ -3885,9 +3930,9 @@ function drawExplorer(){
   const r = player.rad * 1.12;
   // anneau acier : arc qui rétrécit = temps de pioche restant
   if (hasPick){
-    const frac = Math.max(0, pickTime / pickDur());
+    const frac = Math.max(0, pickUses / pickMax());   // les coups qui restent
     let ra = 0.45 + 0.15 * Math.sin(tnow * 4);
-    if (pickTime < 1.5) ra = (Math.sin(tnow * 14) > 0) ? 0.7 : 0.12;   // ça va casser
+    if (pickUses === 1) ra = (Math.sin(tnow * 14) > 0) ? 0.7 : 0.12;   // dernier coup
     ctx.beginPath();
     ctx.arc(player.x, player.y, r + 5.5, -Math.PI / 2, -Math.PI / 2 + frac * Math.PI * 2);
     ctx.strokeStyle = 'rgba(167,184,189,' + ra.toFixed(3) + ')';
