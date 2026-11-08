@@ -957,7 +957,7 @@ function setupVault(){
     for (let k = out.length - 1; k > 0; k--){ const m = Math.floor(Math.random() * (k + 1)); const t = out[k]; out[k] = out[m]; out[m] = t; }
     return out;
   };
-  const kind = (worldMode && world && WORLD.zones[world.cur].sceau) || pickOf(['sequence', 'cle', 'minute']);   // en Aventure, l'énigme d'une zone à sceau est fixe
+  const kind = (worldMode && world && WORLD.zones[world.cur].enigme) || pickOf(['sequence', 'cle', 'minute']);   // en Aventure, l'énigme d'une zone est fixe   // en Aventure, l'énigme d'une zone à sceau est fixe
   vault = { kind, cx: 2 * v.i + 1, cy: 2 * v.j + 1, dx: v.dx, dy: v.dy, open: false, step: 0, timer: 0, plates: [], order: [], key: null, near: false };
   const cellPos = (r) => ({ cx: 2 * r[0] + 1, cy: 2 * r[1] + 1 });
   if (kind === 'sequence'){
@@ -982,7 +982,7 @@ function setupVault(){
 function openVault(){
   if (!vault || vault.open) return;
   vault.open = true; vault.timer = 0;
-  if (worldMode){ world.zones[world.cur].vaultOpen = true; saveWorld(); }
+  if (worldMode){ world.zones[world.cur].vaultOpen = true; saveWorld(); unlockZone(); }
   wall[wIdx(vault.dx, vault.dy)] = 0; layerDirty = true;
   const x = ctrX(vault.dx), y = ctrY(vault.dy);
   burst(x, y, reducedMotion ? 8 : 26, 200, '#FFD680', 'spark'); puff(x, y, 3, '#B8A070', true); addRing(x, y);
@@ -1209,26 +1209,40 @@ function pickBoon(k){
 // Chaque zone a sa graine : son labyrinthe est le même à chaque visite. Les vagues, les trésors et les ennemis, eux, varient.
 // Trois régions. Chacune finit par un donjon fermé par une grande porte à trois sceaux (un par chambre forte de la région) ;
 // le colosse du donjon tombé, une porte des Galeries cède sur la région suivante (apres).
-const WORLD = { start: 'galeries', zones: {
-  galeries:    { nom: 'Les Galeries',   style: 0,  seed: 1101, diff: 0, quota: 8,  region: 'ouest',  doors: ['caverne', 'puits', 'citernes', 'marais'], map: [0.500, 0.957] },
-  caverne:     { nom: 'La Caverne',     style: 1,  seed: 2202, diff: 1, quota: 9,  region: 'ouest',  doors: ['galeries', 'cendre'],                    map: [0.188, 0.673], sceau: 'sequence' },
-  puits:       { nom: 'Le Puits',       style: 2,  seed: 3303, diff: 1, quota: 9,  region: 'ouest',  doors: ['galeries', 'cendre'],                    map: [0.150, 0.468], sceau: 'minute' },
-  cendre:      { nom: 'La Cendre',      style: 3,  seed: 4404, diff: 2, quota: 10, region: 'ouest',  doors: ['caverne', 'puits', 'donjon'],            map: [0.236, 0.281], sceau: 'cle' },
-  donjon:      { nom: 'Le Donjon',      style: 12, seed: 5505, diff: 3, quota: 12, region: 'ouest',  doors: ['cendre'],                                map: [0.215, 0.115], hint: 'un colosse garde ces murs',
+// Lot 14 : le monde est UNE grande carte coupée en écrans, une grille de 3 colonnes (une région chacune) sur 5 rangs.
+// g = [colonne, rang] (rang 0 en haut) ; les portes se déduisent des voisins ; map = où la zone est peinte sur l'illustration d'Emma.
+// enigme = l'énigme de la zone : la résoudre ouvre sa chambre forte et ses portes (les éclats ne débloquent plus rien).
+const WORLD = { start: 'galeries', cols: 3, rows: 5, zones: {
+  galeries:    { nom: 'Les Galeries',   style: 0,  seed: 1101, diff: 0, quota: 8,  region: 'ouest',  g: [0, 4], enigme: 'sequence', map: [0.500, 0.900] },
+  caverne:     { nom: 'La Caverne',     style: 1,  seed: 2202, diff: 1, quota: 9,  region: 'ouest',  g: [0, 3], enigme: 'minute',   map: [0.188, 0.660], sceau: true },
+  puits:       { nom: 'Le Puits',       style: 2,  seed: 3303, diff: 1, quota: 9,  region: 'ouest',  g: [0, 2], enigme: 'sequence', map: [0.150, 0.468], sceau: true },
+  cendre:      { nom: 'La Cendre',      style: 3,  seed: 4404, diff: 2, quota: 10, region: 'ouest',  g: [0, 1], enigme: 'minute',   map: [0.236, 0.300], sceau: true },
+  donjon:      { nom: 'Le Donjon',      style: 12, seed: 5505, diff: 3, quota: 12, region: 'ouest',  g: [0, 0], map: [0.215, 0.140], hint: 'un colosse garde ces murs',
                  boss: { nom: 'le Colosse de cendre', hp: 3, speed: 1.7, col: [255, 140, 70] } },
-  citernes:    { nom: 'Les Citernes',   style: 6,  seed: 6606, diff: 2, quota: 10, region: 'centre', apres: 'donjon',    doors: ['galeries', 'scriptorium', 'jardin'], map: [0.455, 0.596] },
-  scriptorium: { nom: 'Le Scriptorium', style: 7,  seed: 7707, diff: 2, quota: 10, region: 'centre', doors: ['citernes', 'geode'],                     map: [0.636, 0.520], sceau: 'sequence' },
-  jardin:      { nom: 'Le Jardin',      style: 8,  seed: 8808, diff: 3, quota: 10, region: 'centre', doors: ['citernes', 'geode'],                     map: [0.396, 0.398], sceau: 'cle' },
-  geode:       { nom: 'La Géode',       style: 10, seed: 9909, diff: 3, quota: 11, region: 'centre', doors: ['scriptorium', 'jardin', 'citadelle'],     map: [0.607, 0.385], sceau: 'minute' },
-  citadelle:   { nom: 'La Citadelle',   style: 12, seed: 1212, diff: 4, quota: 12, region: 'centre', doors: ['geode'],                                 map: [0.493, 0.180], hint: 'un colosse garde ces murs',
+  citernes:    { nom: 'Les Citernes',   style: 6,  seed: 6606, diff: 2, quota: 10, region: 'centre', g: [1, 4], enigme: 'sequence', map: [0.455, 0.600], apres: 'donjon' },
+  scriptorium: { nom: 'Le Scriptorium', style: 7,  seed: 7707, diff: 2, quota: 10, region: 'centre', g: [1, 3], enigme: 'minute',   map: [0.636, 0.520], sceau: true },
+  jardin:      { nom: 'Le Jardin',      style: 8,  seed: 8808, diff: 3, quota: 10, region: 'centre', g: [1, 2], enigme: 'sequence', map: [0.396, 0.398], sceau: true },
+  geode:       { nom: 'La Géode',       style: 10, seed: 9909, diff: 3, quota: 11, region: 'centre', g: [1, 1], enigme: 'minute',   map: [0.607, 0.385], sceau: true },
+  citadelle:   { nom: 'La Citadelle',   style: 12, seed: 1212, diff: 4, quota: 12, region: 'centre', g: [1, 0], map: [0.493, 0.170], hint: 'un colosse garde ces murs',
                  boss: { nom: 'le Colosse de cristal', hp: 4, speed: 1.85, col: [190, 130, 255] } },
-  marais:      { nom: 'Le Marais',      style: 11, seed: 1313, diff: 3, quota: 10, region: 'est',    apres: 'citadelle', doors: ['galeries', 'dunes', 'mosaiques'],  map: [0.764, 0.779] },
-  dunes:       { nom: 'Les Dunes',      style: 4,  seed: 1414, diff: 3, quota: 11, region: 'est',    doors: ['marais', 'glaciere'],                    map: [0.803, 0.607], sceau: 'minute' },
-  mosaiques:   { nom: 'Les Mosaïques',  style: 9,  seed: 1515, diff: 4, quota: 11, region: 'est',    doors: ['marais', 'glaciere'],                    map: [0.789, 0.449], sceau: 'sequence' },
-  glaciere:    { nom: 'La Glacière',    style: 5,  seed: 1616, diff: 4, quota: 12, region: 'est',    doors: ['dunes', 'mosaiques', 'forteresse'],      map: [0.835, 0.350], sceau: 'cle' },
-  forteresse:  { nom: 'La Forteresse',  style: 12, seed: 1717, diff: 5, quota: 12, region: 'est',    doors: ['glaciere'],                              map: [0.790, 0.195], hint: 'un colosse garde ces murs',
+  marais:      { nom: 'Le Marais',      style: 11, seed: 1313, diff: 3, quota: 10, region: 'est',    g: [2, 4], enigme: 'sequence', map: [0.764, 0.779], apres: 'citadelle' },
+  dunes:       { nom: 'Les Dunes',      style: 4,  seed: 1414, diff: 3, quota: 11, region: 'est',    g: [2, 3], enigme: 'minute',   map: [0.803, 0.607], sceau: true },
+  mosaiques:   { nom: 'Les Mosaïques',  style: 9,  seed: 1515, diff: 4, quota: 11, region: 'est',    g: [2, 2], enigme: 'sequence', map: [0.789, 0.449], sceau: true },
+  glaciere:    { nom: 'La Glacière',    style: 5,  seed: 1616, diff: 4, quota: 12, region: 'est',    g: [2, 1], enigme: 'minute',   map: [0.850, 0.330], sceau: true },
+  forteresse:  { nom: 'La Forteresse',  style: 12, seed: 1717, diff: 5, quota: 12, region: 'est',    g: [2, 0], map: [0.790, 0.170], hint: 'un colosse garde ces murs',
                  boss: { nom: 'le Colosse de glace', hp: 5, speed: 2.0, col: [140, 210, 255] } },
 } };
+// les voisins : dans une colonne, haut et bas ; entre colonnes, seulement le rang du bas (le passage d'une région à l'autre)
+(function(){
+  const at = {}; for (const id in WORLD.zones){ const z = WORLD.zones[id]; at[z.g[0] + ',' + z.g[1]] = id; }
+  for (const id in WORLD.zones){
+    const z = WORLD.zones[id], c = z.g[0], r = z.g[1]; z.links = [];
+    const add = (dx, dy) => { const o = at[(c + dx) + ',' + (r + dy)]; if (o) z.links.push({ to: o, dx, dy }); };
+    add(0, -1); add(0, 1);
+    if (r === WORLD.rows - 1){ add(-1, 0); add(1, 0); }
+    z.doors = z.links.map((l) => l.to);
+  }
+})();
 for (const id in WORLD.zones) WORLD.zones[id].id = id;
 let worldMode = false, world = null, zdoors = [], zdoorLock = -1, pendingZone = null, pendingFrom = null, zoneEntry = { x: 0, y: 0 }, pendingBanner = null;
 function withSeed(seed, fn){ const r = Math.random; Math.random = mulberry(seed); try { return fn(); } finally { Math.random = r; } }
@@ -1269,92 +1283,86 @@ function seals(region){ return sealZones(region).filter((id) => world.zones[id].
 // ce qui retient une porte (null : elle s'ouvre)
 function doorBlock(from, to){
   const zf = WORLD.zones[from], zt = WORLD.zones[to];
-  if (!zf.boss && !world.zones[from].unlocked) return 'scellée : ' + Math.min(stageGot, stageQuota()) + ' / ' + stageQuota() + ' éclats';
-  if (zt.boss){ const n = seals(zt.region); if (n < 3) return 'grande porte : ' + n + ' / 3 sceaux'; }
+  if (zf.boss) return null;                                                   // d'un donjon, on peut toujours fuir
+  if (zt.boss){ const n = seals(zt.region); return n < 3 ? 'grande porte : ' + n + ' / 3 sceaux' : null; }
   if (zt.apres && zt.region !== zf.region && !world.zones[zt.apres].down) return 'elle cédera quand ' + WORLD.zones[zt.apres].boss.nom + ' tombera';
+  if (zf.apres && zt.region !== zf.region) return null;                       // retour vers la région d'avant : ouvert
+  if (!world.zones[from].unlocked && !world.zones[to].unlocked) return 'scellée : résous l’énigme de la zone';
   return null;
 }
 function setStageZone(id){
   const z = WORLD.zones[id];
-  setStage(0, z.style);
+  setStage(0, z.style, 'rect');                 // lot 14 : chaque zone remplit l'écran, même grille partout
+  curStage.cell = 1.0;
   curStage.quota = z.quota;
   curStage.waveMul = Math.max(0.82, 1.05 - 0.05 * z.diff);
   curStage.scarab = [0, 1, 2, 2, 3, 3][z.diff]; curStage.garde = [0, 0, 1, 2, 2, 3][z.diff];
   if (z.boss){ curStage.scarab = 0; curStage.garde = 0; }
 }
-// les portes d'une zone : ENCASTRÉES dans un mur qui ne bouge jamais (le bord du labyrinthe), au fond d'une salle éloignée du départ.
-// On n'y entre qu'en poussant contre elle : on ne passe plus par une porte sans le vouloir (retour d'AbduLlah, 08/11).
-let pushX = 0, pushY = 0;
-function doorWallOf(i, j, used){
-  for (const dv of [[0, -1], [-1, 0], [1, 0], [0, 1]]){          // le mur du haut d'abord : la vue de trois quarts montre sa face
-    const ni = i + dv[0], nj = j + dv[1];
-    const outside = ni < 0 || nj < 0 || ni >= Rx || nj >= Ry || !roomMask[rid(ni, nj)];
-    if (!outside) continue;                                     // entre deux salles, le passage peut s'ouvrir : pas de porte là
-    const wx = 2 * i + 1 + dv[0], wy = 2 * j + 1 + dv[1];
-    if (vaultAdj(wx, wy) || used.has(wx + ',' + wy)) continue;
-    return { cx: wx, cy: wy, rx: 2 * i + 1, ry: 2 * j + 1, dx: dv[0], dy: dv[1] };
+// Les portes (lot 14) : une par côté partagé avec une zone voisine, ENCASTRÉE dans le mur du bord,
+// au même endroit des deux côtés (même colonne de salles pour haut et bas, même rangée pour gauche et droite).
+// On y entre en poussant contre elle ; on ressort dans la zone voisine, dans la salle qui fait face.
+let pushX = 0, pushY = 0, zoneDoorRooms = new Set();
+function pairIndex(key, n){ let h = 7; for (let k = 0; k < key.length; k++) h = (h * 31 + key.charCodeAt(k)) >>> 0; return 1 + (h % Math.max(1, n - 2)); }
+function zoneDoorSpecs(id){
+  const z = WORLD.zones[id], c = z.g[0], r = z.g[1], out = [];
+  for (const l of z.links){
+    const key = l.dy ? 'v' + c + ',' + Math.min(r, r + l.dy) : 'h' + Math.min(c, c + l.dx) + ',' + r;
+    if (l.dy){ const i = pairIndex(key, Rx), j = l.dy < 0 ? 0 : Ry - 1; out.push({ to: l.to, dx: 0, dy: l.dy, i, j }); }
+    else { const j = pairIndex(key, Ry), i = l.dx < 0 ? 0 : Rx - 1; out.push({ to: l.to, dx: l.dx, dy: 0, i, j }); }
   }
-  return null;
+  return out;
 }
 function placeZoneDoors(id){
-  zdoors = [];
-  const z = WORLD.zones[id], sr = startRoom(), d = roomDistances(sr[0], sr[1]), rooms = [];
-  for (let j = 0; j < Ry; j++) for (let i = 0; i < Rx; i++){
-    if (!roomMask[rid(i, j)] || (i === sr[0] && j === sr[1]) || (vaultPick && i === vaultPick.i && j === vaultPick.j) || d[rid(i, j)] < 0) continue;
-    if (!doorWallOf(i, j, new Set())) continue;
-    rooms.push([i, j]);
-  }
-  rooms.sort((a, b) => d[rid(b[0], b[1])] - d[rid(a[0], a[1])]);
-  const far = rooms.slice(0, Math.max(z.doors.length * 3, 6));
-  for (let k = far.length - 1; k > 0; k--){ const m = Math.floor(Math.random() * (k + 1)); const t = far[k]; far[k] = far[m]; far[m] = t; }
-  const used = new Set(), usedRoom = new Set();
-  let k = 0;
-  for (const to of z.doors){
-    while (k < far.length && usedRoom.has(far[k][0] + ',' + far[k][1])) k++;
-    const r = far[k++]; if (!r) break;
-    const w = doorWallOf(r[0], r[1], used); if (!w) continue;
-    used.add(w.cx + ',' + w.cy); usedRoom.add(r[0] + ',' + r[1]);
-    zdoors.push(Object.assign(w, { to, msgT: -9 }));
-  }
+  zdoors = zoneDoorSpecs(id).map((d) => ({ to: d.to, dx: d.dx, dy: d.dy, rx: 2 * d.i + 1, ry: 2 * d.j + 1, cx: 2 * d.i + 1 + d.dx, cy: 2 * d.j + 1 + d.dy, msgT: -9 }));
 }
-function enterZone(id, from){
+function enterZone(id, from, viaSlide){
   worldMode = true; world.cur = id; world.zones[id].seen = true;
   const z = WORLD.zones[id], st = world.zones[id];
-  stageIdx = z.diff;
-  withSeed(z.seed, () => { setStageZone(id); newMaze(); placeZoneDoors(id); });
+  stageIdx = Math.max(1, z.diff);
+  withSeed(z.seed, () => { setStageZone(id); zoneDoorRooms = new Set(); newMaze(); placeZoneDoors(id); });
   treasures = []; particles = []; rings = []; texts = [];
   withSeed(z.seed + 11, setupVault);
-  if (z.sceau && !vault) st.vaultDone = true;           // garde-fou : un sceau sans chambre forte serait introuvable
+  if (!z.boss && !vault) st.unlocked = true;            // garde-fou : une zone sans énigme posable ne doit jamais enfermer
+  if (z.sceau && !vault) st.vaultDone = true;
   if (vault && st.vaultOpen){
     vault.open = true; wall[wIdx(vault.dx, vault.dy)] = 0;
     if (st.vaultDone) treasures = treasures.filter((t) => t.kind !== 'joyau');
   }
-  pick = null; refillPick(); pickT = PICK_FIRST; pickTime = 0; digT = 0; swing = null;
+  pick = null; pickT = PICK_FIRST; pickTime = 0; digT = 0; swing = null;
   bonus = null; bonusT = BONUS_FIRST * 0.6; bonusBag = []; lastBonus = null;
   for (const k in fx){ fx[k] = 0; fxTickT[k] = 0; }
-  exitP = null; stageGot = st.unlocked ? Math.max(st.got, z.quota) : st.got; stageT = 0; jump = null; bondN = 0;
-  helmet = true; helmetExtra = boons.casque ? 1 : 0; invuln = 0; combo = 0; comboTimer = 0;
+  exitP = null; stageGot = st.got; stageT = 0; jump = null; bondN = 0;
+  helmet = true; helmetExtra = boons.casque ? 1 : 0; invuln = viaSlide ? 0.6 : 0; combo = 0; comboTimer = 0;
   const dr = from ? zdoors.find((d) => d.to === from) : null;
   if (dr){ zoneEntry = { x: ctrX(dr.rx), y: ctrY(dr.ry) }; zdoorLock = zdoors.indexOf(dr); }
   else { const sr = startRoom(); zoneEntry = { x: ctrX(2 * sr[0] + 1), y: ctrY(2 * sr[1] + 1) }; zdoorLock = -1; }
   player.x = player.tx = zoneEntry.x; player.y = player.ty = zoneEntry.y; player.fx = dr ? -dr.dx : 0; player.fy = dr ? -dr.dy : -1;
   waveTimer = 3; spawnT = 0.6; portalLock = -1; boostWas = false; tele = null; bossWaveN = 0;
   layerDirty = true; makeSpores(); spawnEnemies(); grace = z.boss && !st.down ? COLOSSE_GRACE : GRACE;
-  showBanner(z.nom.toUpperCase(), z.boss && st.down ? 'le colosse est tombé' : (z.hint != null ? z.hint : (STYLES[z.style].hint || '')));
+  // la bannière seulement la première fois (un passage d'écran doit rester instantané)
+  if (!st.named || z.boss){ st.named = true; showBanner(z.nom.toUpperCase(), z.boss && st.down ? 'le colosse est tombé' : (z.hint != null ? z.hint : (st.unlocked ? '' : 'une énigme garde ses portes'))); }
   saveWorld();
 }
+// les éclats ne débloquent plus de porte : le quota d'une zone donne le choix d'un bonus
 function worldQuota(){
   const st = world.zones[world.cur];
-  if (WORLD.zones[world.cur].boss) return;            // dans un donjon, c'est le colosse qui compte
-  if (st.unlocked || stageGot < stageQuota()) return;
-  st.unlocked = true;
-  snd('plate', 0.8, 1); snd('door2', 0.5, 0.95, 0.05); snd('up', 0.5, 0.9, 0.1); buzz(30);
-  showBanner('LES PORTES S’OUVRENT', 'cherche-les dans la zone');
-  saveWorld();
-  if (!st.boon){ st.boon = true; pendingBanner = ['LES PORTES S’OUVRENT', 'cherche-les dans la zone']; reachExit(); }
+  if (st.boon || stageGot < stageQuota()) return;
+  st.boon = true; saveWorld();
+  snd('bell', 0.5, 1.1); snd('up', 0.4, 1.0, 0.06);
+  pendingBanner = null; reachExit();
+}
+// l'énigme résolue : la zone s'ouvre
+function unlockZone(){
+  if (!worldMode) return;
+  const st = world.zones[world.cur]; if (st.unlocked) return;
+  st.unlocked = true; saveWorld();
+  snd('door2', 0.5, 0.95, 0.25); snd('up', 0.5, 0.9, 0.3); buzz(30);
+  showBanner('LES PORTES S’OUVRENT', 'pousse contre une porte pour passer');
+  for (const d of zdoors) if (!doorBlock(world.cur, d.to)){ addRing(ctrX(d.cx), ctrY(d.cy)); puff(ctrX(d.cx), ctrY(d.cy), 3, '#FFD680', true); }
 }
 function updateZoneDoors(){
-  if (!worldMode || !zdoors.length || jump) return;
+  if (!worldMode || !zdoors.length || jump || slide) return;
   // en arrivant, la porte d'où l'on vient dort tant qu'on n'a pas quitté sa salle (le doigt pousse peut-être encore)
   if (zdoorLock >= 0){ const l = zdoors[zdoorLock]; if (l && Math.hypot(player.x - ctrX(l.rx), player.y - ctrY(l.ry)) > cell * 1.3) zdoorLock = -1; }
   for (let k = 0; k < zdoors.length; k++){
@@ -1365,18 +1373,37 @@ function updateZoneDoors(){
     const close = Math.hypot(player.x - ctrX(d.cx), player.y - ctrY(d.cy)) < cell * 0.82;
     if (!inRoom || !pushing || !close) continue;
     const b = doorBlock(world.cur, d.to);
-    if (!b){ travel(d.to); return; }
+    if (!b){ travel(d.to, d); return; }
     if (tnow - d.msgT > 2.5){
-      d.msgT = tnow; addText(ctrX(d.cx), ctrY(d.cy) - 26, b); snd('metalB', 0.4, 0.8); puff(ctrX(d.cx), ctrY(d.cy), 1, '#8A9B90', true);
-      if (WORLD.zones[d.to].boss && !vaultHint.sceau){ vaultHint.sceau = true; addText(ctrX(d.cx), ctrY(d.cy) - 44, 'un sceau dort dans chaque chambre forte'); }
+      d.msgT = tnow; addText(ctrX(d.cx) - d.dx * cell, ctrY(d.cy) - 26 - d.dy * cell, b); snd('metalB', 0.4, 0.8); puff(ctrX(d.cx), ctrY(d.cy), 1, '#8A9B90', true);
+      if (WORLD.zones[d.to].boss && !vaultHint.sceau){ vaultHint.sceau = true; addText(ctrX(d.cx), ctrY(d.cy) + 30, 'un sceau dort dans chaque chambre forte'); }
     }
   }
 }
-function travel(to){
-  pendingZone = to; pendingFrom = world.cur; world.zones[world.cur].got = stageGot;
-  state = 'transition'; transT = 0; transSwitched = false;
+// le passage : l'écran glisse d'un quart de seconde vers la zone voisine, sans fondu ni bannière
+let slide = null;
+const slideOld = document.createElement('canvas'), slideNew = document.createElement('canvas');
+function travel(to, d){
+  world.zones[world.cur].got = stageGot;
+  const from = world.cur;
+  slideOld.width = canvas.width; slideOld.height = canvas.height; slideOld.getContext('2d').drawImage(canvas, 0, 0);
   for (const k in fx) fx[k] = 0;
-  jump = null; snd('door4', 0.7, 1.05); snd('whoosh', 0.6, 1.1, 0.03); snd('down', 0.35, 1.3, 0.08); buzz(30);
+  jump = null; snd('door4', 0.6, 1.1); snd('whoosh', 0.5, 1.2, 0.02); buzz(20);
+  enterZone(to, from, true);
+  slide = { dx: d ? d.dx : 0, dy: d ? d.dy : -1, t: 0, dur: reducedMotion ? 0.12 : 0.26 };
+}
+function applySlide(dt){
+  if (!slide) return;
+  slide.t += dt;
+  const k = Math.min(1, slide.t / slide.dur), e = 1 - Math.pow(1 - k, 3), cw = canvas.width, ch = canvas.height;
+  if (slideNew.width !== cw || slideNew.height !== ch){ slideNew.width = cw; slideNew.height = ch; }
+  const g = slideNew.getContext('2d'); g.clearRect(0, 0, cw, ch); g.drawImage(canvas, 0, 0);
+  const ox = -slide.dx * cw * e, oy = -slide.dy * ch * e;
+  ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.fillStyle = '#0B110D'; ctx.fillRect(0, 0, cw, ch);
+  ctx.drawImage(slideOld, ox, oy); ctx.drawImage(slideNew, ox + slide.dx * cw, oy + slide.dy * ch);
+  ctx.restore();
+  if (k >= 1) slide = null;
 }
 function respawnZone(){
   world.deaths++;
@@ -1421,13 +1448,13 @@ function drawZoneDoors(){
       });
     }
     ctx.font = "500 9px 'Cinzel', Georgia, serif"; ctx.textAlign = 'center'; ctx.fillStyle = 'rgba(240,234,217,0.85)'; const nm = dest.nom.replace(/^(La |Le |Les )/, '').toUpperCase(), hw = ctx.measureText(nm).width / 2 + 3;
-    ctx.fillText(nm, Math.max(hw, Math.min(W - hw, x - d.dx * cell * 0.35)), y + h * 0.5 + 11);   // le nom reste dans l'écran
+    ctx.fillText(nm, Math.max(hw, Math.min(W - hw, x - d.dx * cell * 0.35)), d.dy > 0 ? y - h * 0.5 - 5 : y + h * 0.5 + 11);   // le nom reste dans l'écran, côté salle
   }
 }
-// l'écran de carte : l'illustration du royaume (Emma, 08/11), les noms en plaques posées par-dessus, la brume sur l'inconnu
-// (map = la place de la plaque sur l'illustration, en fraction de sa largeur et de sa hauteur ; sans l'image, un schéma au même endroit)
+// l'écran de carte (lot 14) : la grille du monde, une vignette par zone découpée dans l'illustration d'Emma,
+// les portes entre les zones, la brume sur l'inconnu, ta position. map = où la zone est peinte sur l'illustration.
 const mapImg = new Image(); mapImg.src = 'carte.webp';
-const MAP_RATIO = 900 / 1613;
+const MAP_RATIO = WORLD.cols / WORLD.rows;
 function openMap(){
   if (state !== 'playing') return;
   state = 'map'; for (const k in keys) keys[k] = false;
@@ -1435,47 +1462,45 @@ function openMap(){
   const W2 = Math.floor(Math.min(window.innerWidth - 24, 420, (window.innerHeight - 150) * MAP_RATIO)), H2 = Math.floor(W2 / MAP_RATIO);
   c.width = W2 * 2; c.height = H2 * 2; c.style.width = W2 + 'px'; c.style.height = H2 + 'px';
   const g = c.getContext('2d'); g.setTransform(2, 0, 0, 2, 0, 0);
+  g.fillStyle = '#0B110D'; g.fillRect(0, 0, W2, H2);
   const art = mapImg.complete && mapImg.naturalWidth > 0;
-  if (art) g.drawImage(mapImg, 0, 0, W2, H2);
-  else { const bgr = g.createLinearGradient(0, 0, 0, H2); bgr.addColorStop(0, '#0F1712'); bgr.addColorStop(1, '#1C2A22'); g.fillStyle = bgr; g.fillRect(0, 0, W2, H2); }
-  const P = (id) => [WORLD.zones[id].map[0] * W2, WORLD.zones[id].map[1] * H2];
-  const known = (id) => world.zones[id].seen || Object.keys(WORLD.zones).some((o) => world.zones[o].seen && WORLD.zones[o].doors.indexOf(id) >= 0);
-  // la brume : épaisse sur ce qu'on ignore, légère sur ce qu'on devine
+  const tw = W2 / WORLD.cols, th = H2 / WORLD.rows, gap = 5;
+  const T = (id) => { const z = WORLD.zones[id]; return [z.g[0] * tw, z.g[1] * th]; };
+  const known = (id) => world.zones[id].seen || WORLD.zones[id].links.some((l) => world.zones[l.to].seen);
+  const rr = (x, y, w, h, r) => { g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r); g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath(); };
+  const fs = Math.max(9, Math.min(11.5, tw * 0.085));
   for (const id in WORLD.zones){
-    const st = world.zones[id]; if (st.seen) continue;
-    const p = P(id), r = W2 * (known(id) ? 0.24 : 0.3), a = known(id) ? 0.78 : 0.96;
-    const fg = g.createRadialGradient(p[0], p[1], 0, p[0], p[1], r);
-    fg.addColorStop(0, 'rgba(12,18,14,' + a + ')'); fg.addColorStop(0.6, 'rgba(12,18,14,' + (a * 0.85).toFixed(2) + ')'); fg.addColorStop(1, 'rgba(12,18,14,0)');
-    g.fillStyle = fg; g.beginPath(); g.arc(p[0], p[1], r, 0, Math.PI * 2); g.fill();
-  }
-  // les chemins déjà faits
-  g.lineCap = 'round';
-  for (const id in WORLD.zones) for (const to of WORLD.zones[id].doors){
-    if (art || id > to || !world.zones[id].seen || !world.zones[to].seen) continue;   // sur l'illustration, les passages sont déjà dessinés
-    const a = P(id), b = P(to);
-    g.strokeStyle = art ? 'rgba(255,214,128,0.55)' : 'rgba(255,214,128,0.8)'; g.lineWidth = art ? 2 : 3.4; g.setLineDash(art ? [4, 5] : []);
-    g.beginPath(); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); g.stroke();
-  }
-  g.setLineDash([]);
-  // les plaques
-  const plate = (x, y, w, h, fill, stroke, lw) => { const r = h / 2; g.beginPath(); g.moveTo(x - w / 2 + r, y - h / 2); g.arcTo(x + w / 2, y - h / 2, x + w / 2, y + h / 2, r); g.arcTo(x + w / 2, y + h / 2, x - w / 2, y + h / 2, r); g.arcTo(x - w / 2, y + h / 2, x - w / 2, y - h / 2, r); g.arcTo(x - w / 2, y - h / 2, x + w / 2, y - h / 2, r); g.closePath(); g.fillStyle = fill; g.fill(); g.lineWidth = lw; g.strokeStyle = stroke; g.stroke(); };
-  const fs = Math.max(9, Math.min(12, W2 * 0.03));
-  for (const id in WORLD.zones){
-    if (!known(id)) continue;
-    const p = P(id), z = WORLD.zones[id], st = world.zones[id], seen = st.seen, here = id === world.cur;
-    const label = seen ? z.nom : '???';
-    g.font = '600 ' + fs + "px 'Cinzel', Georgia, serif"; g.textAlign = 'center'; g.textBaseline = 'middle';
-    const w = Math.max(fs * 3.2, g.measureText(label).width + fs * 1.4), h = fs * 2.1;
-    plate(p[0], p[1], w, h, here ? 'rgba(52,34,16,0.94)' : 'rgba(14,20,16,' + (seen ? 0.88 : 0.7) + ')', here ? '#FFE9C8' : (st.unlocked || st.down ? '#FFD680' : 'rgba(170,190,196,0.55)'), here ? 2.4 : 1.4);
-    g.fillStyle = seen ? '#F0EAD9' : 'rgba(240,234,217,0.55)'; g.fillText(label, p[0], p[1] + 0.5);
-    if (seen && z.sceau){ g.beginPath(); g.arc(p[0] + w / 2 - 1, p[1] - h / 2 + 1, 4.2, 0, Math.PI * 2); g.fillStyle = st.vaultDone ? '#FFD680' : 'rgba(16,20,18,0.95)'; g.fill(); g.lineWidth = 1.2; g.strokeStyle = '#FFD680'; g.stroke(); }
-    if (z.boss){
-      sealCols(z.region).forEach((s, k) => { g.beginPath(); g.arc(p[0] + (k - 1) * 11, p[1] + h / 2 + 7, 3.6, 0, Math.PI * 2); g.fillStyle = world.zones[s.id].vaultDone ? s.c : 'rgba(16,20,18,0.95)'; g.fill(); g.lineWidth = 1; g.strokeStyle = s.c; g.stroke(); });
-      if (st.down){ g.strokeStyle = '#FFD680'; g.lineWidth = 2.2; g.beginPath(); g.moveTo(p[0] - w / 2 - 12, p[1]); g.lineTo(p[0] - w / 2 - 8, p[1] + 4); g.lineTo(p[0] - w / 2 - 2, p[1] - 5); g.stroke(); }
+    const z = WORLD.zones[id], st = world.zones[id], p = T(id), x = p[0] + gap / 2, y = p[1] + gap / 2, w = tw - gap, h = th - gap;
+    g.save(); rr(x, y, w, h, 8); g.clip();
+    if (art){
+      const iw = mapImg.naturalWidth, ih = mapImg.naturalHeight, cw = iw * 0.34, ch = cw * h / w;
+      const sx = Math.max(0, Math.min(iw - cw, z.map[0] * iw - cw / 2)), sy = Math.max(0, Math.min(ih - ch, z.map[1] * ih - ch / 2));
+      g.drawImage(mapImg, sx, sy, cw, ch, x, y, w, h);
+    } else { g.fillStyle = BIOMES[z.style].stone; g.fillRect(x, y, w, h); }
+    if (!st.seen){ g.fillStyle = known(id) ? 'rgba(10,15,12,0.78)' : 'rgba(10,15,12,0.95)'; g.fillRect(x, y, w, h); }
+    else { const sh = g.createLinearGradient(0, y + h * 0.55, 0, y + h); sh.addColorStop(0, 'rgba(10,15,12,0)'); sh.addColorStop(1, 'rgba(10,15,12,0.75)'); g.fillStyle = sh; g.fillRect(x, y, w, h); }
+    g.restore();
+    const here = id === world.cur;
+    rr(x, y, w, h, 8); g.lineWidth = here ? 3 : 1.4; g.strokeStyle = here ? '#FFE9C8' : (st.unlocked || st.down ? 'rgba(255,214,128,0.85)' : 'rgba(170,190,196,0.4)'); g.stroke();
+    if (known(id)){
+      g.font = '600 ' + fs + "px 'Cinzel', Georgia, serif"; g.textAlign = 'center'; g.textBaseline = 'alphabetic';
+      g.fillStyle = st.seen ? '#F0EAD9' : 'rgba(240,234,217,0.5)'; g.fillText(st.seen ? z.nom : '???', x + w / 2, y + h - 8);
+      if (st.seen && z.sceau){ g.beginPath(); g.arc(x + w - 9, y + 9, 4.5, 0, Math.PI * 2); g.fillStyle = st.vaultDone ? '#FFD680' : 'rgba(16,20,18,0.95)'; g.fill(); g.lineWidth = 1.2; g.strokeStyle = '#FFD680'; g.stroke(); }
+      if (z.boss){
+        sealCols(z.region).forEach((s2, k) => { g.beginPath(); g.arc(x + w / 2 + (k - 1) * 11, y + 11, 3.6, 0, Math.PI * 2); g.fillStyle = world.zones[s2.id].vaultDone ? s2.c : 'rgba(16,20,18,0.95)'; g.fill(); g.lineWidth = 1; g.strokeStyle = s2.c; g.stroke(); });
+        if (st.down){ g.strokeStyle = '#FFD680'; g.lineWidth = 2.6; g.beginPath(); g.moveTo(x + 9, y + h / 2); g.lineTo(x + 14, y + h / 2 + 6); g.lineTo(x + 23, y + h / 2 - 7); g.stroke(); }
+      }
     }
-    if (here){ g.fillStyle = '#FFE9C8'; g.beginPath(); g.moveTo(p[0], p[1] - h / 2 - 2); g.lineTo(p[0] - 6, p[1] - h / 2 - 11); g.lineTo(p[0] + 6, p[1] - h / 2 - 11); g.closePath(); g.fill(); }
+    if (here){ g.fillStyle = '#FFE9C8'; g.beginPath(); g.arc(x + w / 2, y + h / 2 - 6, 6, 0, Math.PI * 2); g.fill(); g.lineWidth = 2; g.strokeStyle = 'rgba(40,24,10,0.9)'; g.stroke(); }
   }
-  g.textBaseline = 'alphabetic';
+  // les portes : un petit seuil sur le bord partagé, doré si on peut passer
+  for (const id in WORLD.zones) for (const l of WORLD.zones[id].links){
+    if (id > l.to || !(known(id) && known(l.to)) || !(world.zones[id].seen || world.zones[l.to].seen)) continue;
+    const p = T(id), open = !doorBlock(id, l.to) || !doorBlock(l.to, id);
+    const cx = p[0] + tw / 2 + l.dx * tw / 2, cy = p[1] + th / 2 + l.dy * th / 2;
+    g.fillStyle = open ? '#FFD680' : 'rgba(150,165,170,0.85)'; g.strokeStyle = 'rgba(16,12,8,0.9)'; g.lineWidth = 1.2;
+    rr(cx - (l.dy ? 9 : 4), cy - (l.dy ? 4 : 9), l.dy ? 18 : 8, l.dy ? 8 : 18, 3); g.fill(); g.stroke();
+  }
   document.getElementById('worldmap').classList.remove('hidden'); ui.hud.classList.remove('visible');
   snd('click3', 0.5, 1.1);
 }
@@ -1818,7 +1843,7 @@ function takeHeart(t){
   snd('bell', 0.6, 1.0, 0.05); snd('bell', 0.5, 1.33, 0.2); snd('up', 0.5, 1.0, 0.3);
   st.unlocked = true;
   let next = null; for (const id in WORLD.zones) if (WORLD.zones[id].apres === cur) next = id;
-  const ban = next ? ['UNE PORTE CÈDE AUX GALERIES', 'vers ' + WORLD.zones[next].nom.toLowerCase()]
+  const ban = next ? ['UNE PORTE CÈDE', 'en bas de la carte, vers ' + WORLD.zones[next].nom.toLowerCase()]
                    : (Object.keys(WORLD.zones).every((id) => !WORLD.zones[id].boss || world.zones[id].down) ? ['LE ROYAUME EST LIBRE', 'les trois colosses sont tombés'] : ['LE DONJON EST LIBRE', 'il reste des colosses debout']);
   saveWorld();
   if (!st.boon){ st.boon = true; pendingBanner = ban; reachExit(); } else showBanner(ban[0], ban[1]);
@@ -3031,7 +3056,7 @@ function update(dt){
   if (state === 'playing' || state === 'transition'){
     const quota = stageQuota();
     const zb = worldMode ? WORLD.zones[world.cur].boss : null, zst = worldMode ? world.zones[world.cur] : null;
-    const gtxt = worldMode ? WORLD.zones[world.cur].nom + ' · ' + (zb ? (zst.down ? 'le colosse est tombé' : 'fissures ' + (zb.hp - zst.hp) + ' / ' + zb.hp) : (zst.unlocked ? 'portes ouvertes' : Math.min(stageGot, quota) + ' / ' + quota))
+    const gtxt = worldMode ? WORLD.zones[world.cur].nom + ' · ' + (zb ? (zst.down ? 'le colosse est tombé' : 'fissures ' + (zb.hp - zst.hp) + ' / ' + zb.hp) : (zst.unlocked ? 'portes ouvertes' : 'énigme à résoudre'))
       : 'Étage ' + (stageIdx + 1) + ' · ' + (exitP ? 'le passage est ouvert' : Math.min(stageGot, quota) + ' / ' + quota);
     if (gtxt !== lastGoal){ ui.goal.textContent = gtxt; lastGoal = gtxt; }
   }
@@ -3088,10 +3113,12 @@ const vaultHint = {};
 function vaultAdj(cx, cy){ return !!vaultPick && Math.abs(cx - (2 * vaultPick.i + 1)) + Math.abs(cy - (2 * vaultPick.j + 1)) === 1; }
 function pickVaultRoom(){
   const sr = startRoom(), cand = [];
+  const resv = new Set();                                  // en Aventure : jamais dans la salle d'une porte de zone
+  if (worldMode && world) for (const d of zoneDoorSpecs(world.cur)) resv.add(d.i + ',' + d.j);
   const ok = (i, j) => i >= 0 && j >= 0 && i < Rx && j < Ry && roomMask[rid(i, j)];
   for (let j = 0; j < Ry; j++) for (let i = 0; i < Rx; i++){
-    if (!roomMask[rid(i, j)] || (i === sr[0] && j === sr[1])) continue;
-    const nb = [[i - 1, j], [i + 1, j], [i, j - 1], [i, j + 1]].filter((n) => ok(n[0], n[1]));
+    if (!roomMask[rid(i, j)] || (i === sr[0] && j === sr[1]) || resv.has(i + ',' + j)) continue;
+    const nb = [[i - 1, j], [i + 1, j], [i, j - 1], [i, j + 1]].filter((n) => ok(n[0], n[1]) && !resv.has(n[0] + ',' + n[1]));
     if (nb.length >= 2) cand.push({ i, j, nb });
   }
   if (!cand.length) return;
@@ -4660,6 +4687,7 @@ function loop(now){
   last = now;
   update(dt);
   draw();
+  applySlide(dt);
   requestAnimationFrame(loop);
 }
 
