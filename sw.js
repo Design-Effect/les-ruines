@@ -1,8 +1,8 @@
 // Les Vestiges Oubliés : service worker : jeu jouable hors-ligne, sans aucun appel réseau.
 // Tout est précaché à l'installation (polices et sons compris) ; ensuite, cache seul.
-const CACHE = 'ruines-v25';
+const CACHE = 'ruines-v26';
 const CORE = ['./', './index.html', './sons.js', './manifest.json',
-              './icon-192.png', './icon-512.png', './apple-touch-icon.png', './carte.webp',
+              './icon-192.png', './icon-512.png', './apple-touch-icon.png', './carte.webp', './voix.js',
               './polices/alegreya-400i.woff2', './polices/alegreya-500.woff2',
               './polices/cinzel-500.woff2', './polices/cinzel-600.woff2'];
 // le mineur rendu dans Blender : 6 séries (course, repos, pioche, chacune avec et sans casque), 8 directions

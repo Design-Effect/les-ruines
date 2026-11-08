@@ -4,7 +4,7 @@
 2. Pousser ces fichiers à la racine (et rien d'autre) :
    `index.html`, `sons.js`, `sw.js`, `manifest.json`, les 3 icônes, le dossier `polices/` (4 fichiers)
    et le dossier `sprites/` (272 images WebP, 2 Mo : le mineur rendu dans Blender).
-   et `carte.webp` (190 Ko : l'illustration de l'écran Carte).
+   et `carte.webp` (190 Ko : l'illustration de l'écran Carte), `voix.js` (460 Ko : la voix off de l'intro).
 3. Settings → Pages → Source : branche `main`, dossier `/ (root)`.
 4. URL : https://design-effect.github.io/les-ruines/
    (2-3 min de propagation au premier déploiement).

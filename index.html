@@ -324,6 +324,7 @@
 </div>
 
 <script src="sons.js"></script>
+<script src="voix.js"></script>
 <script>
 'use strict';
 
@@ -958,32 +959,53 @@ function moveVag(t, dt){
   if (!reducedMotion && Math.random() < dt * 12) burst(t.x, t.y, 1, 22, 'rgb(' + tskin().glow.join(',') + ')', 'spark');
 }
 // ---------- Lot 17 : l'intro, peinte en code (quatre tableaux, bruitages seulement, jamais de musique ni de visage) ----------
+// la voix off (Léonor, 08/11 : Christian, une seule prise, 17,6 s) : chaque tableau commence 0,3 s avant sa phrase
+const VOIX = { src: 'voix-intro.mp3', debuts: [0, 3.94, 9.88, 15.23], duree: 17.58, avance: 0.6, lead: 0.3 };
 const INTRO = [
-  { txt: 'Depuis des années, il parcourt le monde, la pioche à l’épaule.', dur: 5.4 },
-  { txt: 'Il cherche ce que les autres ont oublié : les vestiges des royaumes engloutis par la pierre.', dur: 6.0 },
-  { txt: 'Son chemin l’a mené ici, au pied d’un donjon que personne n’a ouvert depuis des siècles.', dur: 6.0 },
-  { txt: 'Dans la poussière de l’entrée, une carte.', dur: 4.8 },
+  { txt: 'Depuis des années, il parcourt le monde, la pioche à l’épaule.', dur: VOIX.avance + VOIX.debuts[1] - VOIX.lead },
+  { txt: 'Il cherche ce que les autres ont oublié : les vestiges des royaumes engloutis par la pierre.', dur: VOIX.debuts[2] - VOIX.debuts[1] },
+  { txt: 'Son chemin l’a mené ici, au pied d’un donjon que personne n’a ouvert depuis des siècles.', dur: VOIX.debuts[3] - VOIX.debuts[2] },
+  { txt: 'Dans la poussière de l’entrée, une carte.', dur: VOIX.duree - VOIX.debuts[3] + VOIX.lead + 1.8 },
 ];
+let voixBuf = null, voixSrc = null, voixT0 = 0, voixDecoding = false;
+function decodeVoix(){
+  if (voixBuf || voixDecoding || !audioCtx || typeof VOIX_DATA === 'undefined') return;
+  voixDecoding = true;
+  try { audioCtx.decodeAudioData(dataToBuffer(VOIX_DATA), (b) => { voixBuf = b; }, () => {}); } catch (e) {}
+}
+// la voix passe par le volume du jeu ; at = l'instant de la prise où l'on commence
+function playVoix(at){
+  if (muted || !audioCtx || !voixBuf) return false;
+  stopVoix();
+  try {
+    voixSrc = audioCtx.createBufferSource(); voixSrc.buffer = voixBuf; voixSrc.connect(master);
+    const off = Math.max(0, at || 0); voixSrc.start(0, off); voixT0 = audioCtx.currentTime - off;
+    return true;
+  } catch (e){ return false; }
+}
+function stopVoix(){ if (voixSrc){ try { voixSrc.stop(); } catch (e) {} voixSrc = null; } }
+function voixTime(){ return voixSrc && audioCtx ? audioCtx.currentTime - voixT0 : -1; }
 let intro = null, mapEnter = false;
 const introEl = () => document.getElementById('intro');
 function h01(n){ const x = Math.sin(n * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); }
 function startIntro(){
-  state = 'intro';
+  state = 'intro'; decodeVoix();
   ui.menu.classList.add('hidden'); ui.hud.classList.remove('visible');
   const el = introEl(); el.classList.remove('hidden');
   intro = { k: -1, t: 0, last: performance.now(), stepT: 0, sounds: {} };
   nextIntro();
   requestAnimationFrame(introLoop);
 }
-function nextIntro(){
+function nextIntro(fromTap){
   intro.k++; intro.t = 0; intro.sounds = {};
   if (intro.k >= INTRO.length){ finishIntro(); return; }
+  if (fromTap && intro.voixOn) playVoix(VOIX.debuts[intro.k] - VOIX.lead);      // un toucher saute aussi la voix à la phrase suivante
   const p = document.getElementById('introTxt'); p.classList.remove('on'); p.textContent = INTRO[intro.k].txt;
   setTimeout(() => p.classList.add('on'), 350);
 }
 function finishIntro(){
   if (!intro) return;
-  intro = null; introEl().classList.add('hidden');
+  intro = null; introEl().classList.add('hidden'); stopVoix();
   try { localStorage.setItem('vestiges-intro', '1'); } catch (e) {}
   startGame('world', true);
   mapEnter = true; openMap();
@@ -996,12 +1018,17 @@ function introLoop(now){
   if (c.width !== Math.floor(w * dpr) || c.height !== Math.floor(h * dpr)){ c.width = Math.floor(w * dpr); c.height = Math.floor(h * dpr); c.style.width = w + 'px'; c.style.height = h + 'px'; }
   const g = c.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0);
   const sc = INTRO[intro.k], t = intro.t;
+  // la voix part dès qu'elle est décodée (au plus tard 2,5 s), recalée sur le temps déjà écoulé
+  if (intro.k === 0 && !intro.voixOn && t >= VOIX.avance && t < 2.5 && voixBuf) intro.voixOn = playVoix(t - VOIX.avance);
+  // la voix mène : le tableau suivant arrive quand sa phrase commence
+  const vt = voixTime(), vo = intro.voixOn && vt >= 0 && vt < VOIX.duree;
   [introRoute, introRuines, introDonjon, introCarte][intro.k](g, w, h, t);
+  if (vo && intro.k < INTRO.length - 1 && vt >= VOIX.debuts[intro.k + 1] - VOIX.lead){ nextIntro(); requestAnimationFrame(introLoop); return; }
   // fondu d'entrée et de sortie de chaque tableau
-  const fin = Math.min(1, t / 0.6), fout = Math.min(1, Math.max(0, (sc.dur - t) / 0.6));
+  const fin = Math.min(1, t / 0.6), fout = vo && intro.k < INTRO.length - 1 ? 1 : Math.min(1, Math.max(0, (sc.dur - t) / 0.6));
   const a = 1 - Math.min(fin, fout);
   if (a > 0){ g.fillStyle = 'rgba(6,8,7,' + a.toFixed(3) + ')'; g.fillRect(0, 0, w, h); }
-  if (t >= sc.dur){ nextIntro(); if (!intro) return; }
+  if (t >= sc.dur + (vo && intro.k < INTRO.length - 1 ? 0.8 : 0)){ nextIntro(); if (!intro) return; }
   requestAnimationFrame(introLoop);
 }
 // le mineur qui marche (images de Blender), à ses pieds en (x, y), hauteur s
@@ -3055,7 +3082,7 @@ window.addEventListener('pointerdown', (e) => {
     if (!vu || !loadWorldSave()) startIntro();                     // première fois : l'histoire, puis la carte
     else { startGame('world'); mapEnter = true; openMap(); }        // ensuite : la carte, on touche sa zone pour entrer
   } else if (state === 'intro'){
-    if (intro && intro.t > 0.6) nextIntro();
+    if (intro && intro.t > 0.6) nextIntro(true);
   } else if (state === 'map'){
     closeMap();
   } else if (state === 'paused'){
@@ -3127,7 +3154,7 @@ window.addEventListener('keydown', (e) => {
   if ((e.key === ' ' || e.key === 'Enter') && (state === 'menu' || state === 'over')){
     initAudio(); startGame(state === 'menu' ? 'world' : undefined);
   } else if (state === 'intro'){
-    if (e.key === 'Escape') finishIntro(); else if ((e.key === ' ' || e.key === 'Enter') && intro && intro.t > 0.6) nextIntro();
+    if (e.key === 'Escape') finishIntro(); else if ((e.key === ' ' || e.key === 'Enter') && intro && intro.t > 0.6) nextIntro(true);
   } else if (state === 'map' && (e.key === ' ' || e.key === 'Enter' || e.key === 'Escape')){
     closeMap();
   } else if (state === 'paused' && e.key !== 'Tab'){

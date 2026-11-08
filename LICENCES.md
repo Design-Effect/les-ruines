@@ -15,3 +15,5 @@
 **Mineur** (`sprites/`) : images rendues dans Blender par script (`projets/les-ruines/blender/mineur.py` de l'atelier), création Fervia, aucun élément tiers.
 
 **Carte du monde** (`carte.webp`) : illustration générée pour Fervia le 08/11/2026 (Higgsfield, modèle Nano Banana Pro, travail `e707d9b1`), puis retouchée (étiquettes anglaises effacées, réduite à 900 px de large). Création Fervia par image générée par IA ; source pleine taille dans `projets/les-ruines/references/` de l'atelier.
+
+**Voix off de l'intro** (`voix.js`, MP3 intégré en base64) : générée pour Fervia le 08/11/2026 avec ElevenLabs (voix de bibliothèque « Christian Page », modèle `eleven_v3`, abonnement du studio), une seule prise des quatre phrases, silences ramenés à 0,8 s ; marque IA dans les métadonnées du fichier source. Source : `projets/les-ruines/voix/intro-v01.mp3` de l'atelier. Aucune musique.
