@@ -1899,11 +1899,10 @@ function unlockZone(){
 }
 function updateZoneDoors(){
   if (!worldMode || !zdoors.length || jump || slide) return;
-  // en arrivant, la porte d'où l'on vient dort tant qu'on n'a pas quitté sa salle (le doigt pousse peut-être encore)
-  if (zdoorLock >= 0){ const l = zdoors[zdoorLock]; if (l && Math.hypot(player.x - ctrX(l.rx), player.y - ctrY(l.ry)) > cell * 1.3) zdoorLock = -1; }
+  // (la porte d'arrivée ne « dort » plus : en arrivant, le doigt pousse toujours à l'opposé d'elle ; un demi-tour doit marcher tout de suite)
+  zdoorLock = -1;
   for (let k = 0; k < zdoors.length; k++){
     const d = zdoors[k];
-    if (k === zdoorLock) continue;
     const inRoom = cellOfX(player.x) === d.rx && cellOfY(player.y) === d.ry;
     const pushing = (pushX * d.dx + pushY * d.dy) > 0.6;
     // contre la porte : on mesure seulement dans le sens de la poussée (avant le 08/11, un décalage de 4 px de côté suffisait à la refuser)
@@ -1913,7 +1912,7 @@ function updateZoneDoors(){
     const b = doorBlock(world.cur, d.to);
     if (!b){ travel(d.to, d); return; }
     if (tnow - d.msgT > 2.5){
-      d.msgT = tnow; addText(ctrX(d.cx) - d.dx * cell, ctrY(d.cy) - 26 - d.dy * cell, b); snd('metalB', 0.4, 0.8); puff(ctrX(d.cx), ctrY(d.cy), 1, '#8A9B90', true);
+      d.msgT = tnow; addText(Math.max(70, Math.min(W - 70, ctrX(d.cx) - d.dx * cell)), ctrY(d.cy) - 26 - d.dy * cell, b, true); snd('metalB', 0.4, 0.8); puff(ctrX(d.cx), ctrY(d.cy), 1, '#8A9B90', true);
       // l'énigme qui garde les portes s'allume, pour qu'on sache où aller (retour d'AbduLlah, 08/11 : « je suis bloqué dans le niveau »)
       if (vault && !vault.open && !world.zones[world.cur].unlocked && b.indexOf('énigme') >= 0){
         const vx = ctrX(vault.dx), vy = ctrY(vault.dy);
@@ -3297,6 +3296,9 @@ function update(dt){
         ix = kx / n; iy = ky / n;
       }
     }
+    // l'intention du doigt, lue AVANT le cadrage de la cible : collé au mur du bord, on ne bouge plus mais on pousse toujours
+    // (avant le 08/11 après-midi, elle se lisait sur le déplacement : une porte du bord ne s'ouvrait pas si l'on était déjà arrêté contre elle)
+    pushX = ix; pushY = iy;
     if (ix !== 0 || iy !== 0){
       player.tx = player.x + ix * cell * 2;
       player.ty = player.y + iy * cell * 2;
@@ -3311,9 +3313,9 @@ function update(dt){
 
     // déplacement plafonné : les détours coûtent du temps
     const px = player.x, py = player.y;
-    let dirx = 0, diry = 0; pushX = 0; pushY = 0;
+    let dirx = 0, diry = 0;
     if (dist > 0.5){
-      dirx = dx / dist; diry = dy / dist; pushX = dirx; pushY = diry;   // l'intention du doigt (pousser contre une porte)
+      dirx = dx / dist; diry = dy / dist;
       const terNow = terrainAt(player.x, player.y);
       const step = Math.min(dist, cell * SPEED_CELLS * (boons.semelles ? 1.08 : 1) * (fx.foulee > 0 ? FOULEE_MULT : 1) * (terNow === 1 ? S().slowMul : (terNow === 4 ? BOOST_MUL : 1)) * dt);
       moveAxis(dirx * step, 0, 0);
