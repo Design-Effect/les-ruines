@@ -637,6 +637,7 @@ function newMaze(){
     roomMask = makeMask(kind);
     vaultPick = null;
     if (stageIdx >= 1 && !bossZone()) pickVaultRoom();     // un donjon n'a pas de chambre forte : c'est la salle du colosse
+    caches = []; if (worldMode && world) pickCacheRooms();   // lot 16 : les cachettes, avant de creuser le labyrinthe
     openE = new Set();
     // génération : remonte-arrière itératif → labyrinthe parfait (connecté) dans le format
     const seen = new Uint8Array(Rx * Ry);
@@ -946,6 +947,92 @@ function moveVag(t, dt){
   } else { t.x += dx / dd * step; t.y += dy / dd * step; }
   if (!reducedMotion && Math.random() < dt * 12) burst(t.x, t.y, 1, 22, 'rgb(' + tskin().glow.join(',') + ')', 'spark');
 }
+// ---------- Lot 16 : les cachettes et les coffres ----------
+// Une petite salle condamnée au bord de la zone, fermée par un mur à lézardes que la pioche casse (un coup).
+// Dedans, un coffre : on le touche, il s'ouvre, gros trésor. Les coffres ouverts restent ouverts (sauvegarde).
+let caches = [];
+const COFFRE_MULT = 15;
+function pickCacheRooms(){
+  caches = [];
+  const z = WORLD.zones[world.cur]; if (z.boss || z.id === WORLD.start) return;
+  const n = z.diff >= 3 ? 2 : 1;
+  const resv = new Set();
+  for (const d of zoneDoorSpecs(world.cur)) resv.add(d.i + ',' + d.j);
+  const sr = startRoom(); resv.add(sr[0] + ',' + sr[1]);
+  if (vaultPick){ resv.add(vaultPick.i + ',' + vaultPick.j); resv.add(vaultPick.ni + ',' + vaultPick.nj); }
+  const inG = (i, j) => i >= 0 && j >= 0 && i < Rx && j < Ry;
+  const cand = [];
+  for (let j = 0; j < Ry; j++) for (let i = 0; i < Rx; i++){
+    const border = i === 0 || j === 0 || i === Rx - 1 || j === Ry - 1, corner = (i === 0 || i === Rx - 1) && (j === 0 || j === Ry - 1);
+    if (!border || corner || !roomMask[rid(i, j)] || resv.has(i + ',' + j)) continue;
+    const nb = [[i - 1, j], [i + 1, j], [i, j - 1], [i, j + 1]].filter((q) => inG(q[0], q[1]));
+    if (!nb.every((q) => roomMask[rid(q[0], q[1])])) continue;                   // jamais à côté d'une autre salle condamnée
+    const inner = nb.filter((q) => !resv.has(q[0] + ',' + q[1]));
+    if (inner.length) cand.push({ i, j, nb: inner });
+  }
+  for (let k = cand.length - 1; k > 0; k--){ const m = Math.floor(Math.random() * (k + 1)); const t = cand[k]; cand[k] = cand[m]; cand[m] = t; }
+  for (const c of cand){
+    if (caches.length >= n) break;
+    if (!roomMask[rid(c.i, c.j)] || caches.some((o) => Math.abs(o.i - c.i) + Math.abs(o.j - c.j) < 3)) continue;
+    const q = c.nb[Math.floor(Math.random() * c.nb.length)];
+    roomMask[rid(c.i, c.j)] = 0;
+    caches.push({ i: c.i, j: c.j, ni: q[0], nj: q[1], wx: 2 * c.i + 1 + (q[0] - c.i), wy: 2 * c.j + 1 + (q[1] - c.j), open: false, broken: false, lid: 0 });
+  }
+}
+function cacheEdge(c){ return c.wx % 2 === 0 ? eH(Math.min(c.i, c.ni), c.j) : eV(c.i, Math.min(c.j, c.nj)); }
+function openCacheWall(c){ c.broken = true; openE.add(cacheEdge(c)); wall[wIdx(c.wx, c.wy)] = 0; wall[wIdx(2 * c.i + 1, 2 * c.j + 1)] = 0; layerDirty = true; }
+function updateCaches(dt){
+  if (!worldMode || !caches.length) return;
+  const st = world.zones[world.cur];
+  for (let k = 0; k < caches.length; k++){
+    const c = caches[k];
+    if (!c.broken && !wall[wIdx(c.wx, c.wy)]){ openCacheWall(c); if (!vaultHint.cache){ vaultHint.cache = true; addText(ctrX(c.wx), ctrY(c.wy) - 30, 'une cachette !', true); } snd('creak1', 0.5, 1.1, 0.1); }
+    if (c.lid < 1 && c.open) c.lid = Math.min(1, c.lid + dt * 3);
+    if (c.open || !c.broken) continue;
+    const x = ctrX(2 * c.i + 1), y = ctrY(2 * c.j + 1);
+    if (Math.hypot(player.x - x, player.y - y) < player.rad + cell * 0.35){
+      c.open = true; st.coffres = st.coffres || []; if (st.coffres.indexOf(k) < 0) st.coffres.push(k);
+      combo = comboTimer > 0 ? combo + 1 : 1; comboTimer = comboWin();
+      const pts = TREASURE_PTS * COFFRE_MULT * combo; score += pts; stat.coffre = (stat.coffre || 0) + 1;
+      addText(x, y - 36, 'coffre !', true); addText(x, y - 16, '+' + pts, true);
+      burst(x, y, reducedMotion ? 10 : 30, 220, '#FFD680', 'spark'); burst(x, y, reducedMotion ? 3 : 8, 120, '#8A6A48');
+      rings.push({ x, y, r: cell * 0.8, life: 1 }); addRing(x, y);
+      // un coffre sur deux (selon sa place, jamais au hasard) contient aussi une pioche neuve
+      if ((c.i + c.j) % 2 === 0){ refillPick(); addText(x, y - 56, 'pioche neuve !'); }
+      snd('latch', 0.8, 0.95); snd('wood', 0.6, 0.9, 0.06); snd('coins', 0.7, 1.0, 0.16); snd('coins2', 0.6, 1.15, 0.26); snd('bell', 0.45, 1.3, 0.34); buzz([30, 30, 50]);
+      if (!reducedMotion) shake = Math.max(shake, 4);
+      saveWorld();
+    }
+  }
+}
+function drawCaches(){
+  if (!worldMode) return;
+  for (const c of caches){
+    // le mur à lézardes : visible si on regarde, plus net quand on approche
+    if (!c.broken){
+      const rx = originX + c.wx * cell, ry = originY + c.wy * cell, d = Math.hypot(ctrX(c.wx) - player.x, ctrY(c.wy) - player.y);
+      const a = 0.28 + 0.5 * Math.max(0, 1 - d / (cell * 4)) * (0.7 + 0.3 * Math.sin(tnow * 3));
+      ctx.strokeStyle = 'rgba(20,14,8,' + (a + 0.15).toFixed(3) + ')'; ctx.lineWidth = 1.6;
+      ctx.beginPath(); ctx.moveTo(rx + cell * 0.2, ry + cell * 0.15); ctx.lineTo(rx + cell * 0.42, ry + cell * 0.4); ctx.lineTo(rx + cell * 0.32, ry + cell * 0.62); ctx.lineTo(rx + cell * 0.55, ry + cell * 0.86);
+      ctx.moveTo(rx + cell * 0.42, ry + cell * 0.4); ctx.lineTo(rx + cell * 0.75, ry + cell * 0.32); ctx.moveTo(rx + cell * 0.32, ry + cell * 0.62); ctx.lineTo(rx + cell * 0.12, ry + cell * 0.7); ctx.stroke();
+      ctx.strokeStyle = 'rgba(255,214,140,' + (a * 0.55).toFixed(3) + ')'; ctx.lineWidth = 0.8; ctx.stroke();
+      continue;
+    }
+    // le coffre
+    const x = ctrX(2 * c.i + 1), y = ctrY(2 * c.j + 1), w = cell * 0.62, h = cell * 0.4;
+    if (!c.open){ const g2 = ctx.createRadialGradient(x, y, 0, x, y, cell * 1.1); g2.addColorStop(0, 'rgba(255,214,128,' + (0.3 + 0.1 * Math.sin(tnow * 3)).toFixed(3) + ')'); g2.addColorStop(1, 'rgba(255,214,128,0)'); ctx.fillStyle = g2; ctx.beginPath(); ctx.arc(x, y, cell * 1.1, 0, Math.PI * 2); ctx.fill(); }
+    ctx.fillStyle = 'rgba(0,0,0,0.4)'; ctx.beginPath(); ctx.ellipse(x, y + h * 0.75, w * 0.6, h * 0.3, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#7A5230'; ctx.fillRect(x - w / 2, y - h * 0.2, w, h * 0.8);
+    ctx.strokeStyle = 'rgba(30,16,6,0.95)'; ctx.lineWidth = 1.3; ctx.strokeRect(x - w / 2, y - h * 0.2, w, h * 0.8);
+    ctx.fillStyle = '#C97B3D'; ctx.fillRect(x - w / 2, y + h * 0.12, w, h * 0.1); ctx.fillRect(x - w * 0.06, y - h * 0.2, w * 0.12, h * 0.8);
+    const lift = c.open ? c.lid : 0;
+    ctx.save(); ctx.translate(x, y - h * 0.2); ctx.scale(1, 1 - lift * 0.65);
+    ctx.fillStyle = '#946638'; ctx.beginPath(); ctx.moveTo(-w / 2, 0); ctx.lineTo(-w / 2, -h * 0.4); ctx.quadraticCurveTo(0, -h * 0.85, w / 2, -h * 0.4); ctx.lineTo(w / 2, 0); ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.restore();
+    if (c.open && c.lid < 1){ const g3 = ctx.createRadialGradient(x, y - h * 0.3, 0, x, y - h * 0.3, cell * 0.8); g3.addColorStop(0, 'rgba(255,230,160,' + (0.7 * (1 - c.lid)).toFixed(3) + ')'); g3.addColorStop(1, 'rgba(255,230,160,0)'); ctx.fillStyle = g3; ctx.beginPath(); ctx.arc(x, y - h * 0.3, cell * 0.8, 0, Math.PI * 2); ctx.fill(); }
+  }
+}
+
 // ---------- Lot 15 : des énigmes variées (le bloc sur la dalle, le signe, les lampes, la mémoire) ----------
 // Toutes se lisent sur place, aucune ne tue, aucune solution ne se tire au hasard au moment de jouer.
 let lockE = new Set();          // les passages d'un rail de bloc : la pierre ne les referme jamais
@@ -1593,6 +1680,7 @@ function enterZone(id, from, viaSlide){
   treasures = []; particles = []; rings = []; texts = [];
   withSeed(z.seed + 11, setupVault);
   if (!z.boss && !vault) st.unlocked = true;            // garde-fou : une zone sans énigme posable ne doit jamais enfermer
+  for (const k of (st.coffres || [])){ const c = caches[k]; if (c){ openCacheWall(c); c.open = true; c.lid = 1; } }
   if (z.sceau && !vault) st.vaultDone = true;
   if (vault && st.vaultOpen){
     vault.open = true; wall[wIdx(vault.dx, vault.dy)] = 0;
@@ -1886,7 +1974,7 @@ function farRooms(minD){
   const pr = playerRoom();
   const d = roomDistances(pr[0], pr[1]);
   let pool = [];
-  const free = (k) => !blockAtRoom(k % Rx, (k - k % Rx) / Rx);
+  const free = (k) => roomMask[k] && !blockAtRoom(k % Rx, (k - k % Rx) / Rx);
   for (let k = 0; k < d.length; k++) if (d[k] >= minD && free(k)) pool.push(k);
   if (!pool.length) for (let k = 0; k < d.length; k++) if (d[k] >= 3 && free(k)) pool.push(k);
   for (let k = pool.length - 1; k > 0; k--){ const m = Math.floor(Math.random() * (k + 1)); const t = pool[k]; pool[k] = pool[m]; pool[m] = t; }
@@ -3180,6 +3268,7 @@ function update(dt){
     if (invuln > 0) invuln -= dt;
     updateEnemies(dt);
     updateVault(dt);
+    updateCaches(dt);
     updateZoneDoors();
     if (exitP){
       exitP.t += dt;
@@ -4758,6 +4847,7 @@ function draw(){
 
   drawPortals();
   drawPuzzle();
+  drawCaches();
   drawZoneDoors();
 
   // 2) scène vivante
