@@ -665,7 +665,7 @@ function newMaze(){
   }
   // tressage : des boucles (beaucoup dans une caverne, presque aucune dans un puits)
   forEachEdge((e) => { if (!openE.has(e) && Math.random() < sd.braid) openE.add(e); });
-  fixedE = new Set();
+  fixedE = new Set(); lockE = new Set();
   if (sd.fixed) openE.forEach((e) => { if (Math.random() < sd.fixed) fixedE.add(e); });
   buildWalls();
   if (vaultPick) wall[wIdx(2 * vaultPick.i + 1, 2 * vaultPick.j + 1)] = 0;
@@ -757,7 +757,7 @@ function makeWave(){
   const cand = [];
   forEachEdge((e) => {
     const r = edgeRooms(e);
-    if (inR(r[0][0], r[0][1]) && inR(r[1][0], r[1][1]) && !fixedE.has(e)) cand.push(e);
+    if (inR(r[0][0], r[0][1]) && inR(r[1][0], r[1][1]) && !fixedE.has(e) && !lockE.has(e)) cand.push(e);
   });
   if (cand.length < 4) return false;
 
@@ -946,6 +946,262 @@ function moveVag(t, dt){
   } else { t.x += dx / dd * step; t.y += dy / dd * step; }
   if (!reducedMotion && Math.random() < dt * 12) burst(t.x, t.y, 1, 22, 'rgb(' + tskin().glow.join(',') + ')', 'spark');
 }
+// ---------- Lot 15 : des énigmes variées (le bloc sur la dalle, le signe, les lampes, la mémoire) ----------
+// Toutes se lisent sur place, aucune ne tue, aucune solution ne se tire au hasard au moment de jouer.
+let lockE = new Set();          // les passages d'un rail de bloc : la pierre ne les referme jamais
+const SIGN_N = 4;               // cercle, triangle, carré, losange
+function setupVault2(kind, pool, cellPos){
+  const v = vault;
+  if (kind === 'signe'){
+    let rs = pool(3, 14); if (rs.length < SIGN_N) rs = pool(1, 30);
+    if (rs.length < SIGN_N) return false;
+    v.signs = []; for (let k = 0; k < SIGN_N; k++) v.signs.push(Object.assign(cellPos(rs[k]), { sign: k, inside: false, wrongT: 0 }));
+    v.sign = Math.floor(Math.random() * SIGN_N);
+    return true;
+  }
+  if (kind === 'memoire'){
+    let rs = pool(2, 10); if (rs.length < 3) rs = pool(1, 30);
+    if (rs.length < 3) return false;
+    for (let k = 0; k < 3; k++) v.plates.push(Object.assign(cellPos(rs[k]), { col: k, lit: false, inside: false }));
+    v.order = [0, 1, 2]; for (let k = 2; k > 0; k--){ const m = Math.floor(Math.random() * (k + 1)); const t = v.order[k]; v.order[k] = v.order[m]; v.order[m] = t; }
+    v.show = null; v.lastShow = -99;
+    return true;
+  }
+  if (kind === 'lampes'){
+    let rs = pool(2, 12); if (rs.length < 3) rs = pool(1, 30);
+    if (rs.length < 3) return false;
+    v.levers = []; for (let k = 0; k < 3; k++) v.levers.push(Object.assign(cellPos(rs[k]), { k, inside: false, flip: 0 }));
+    // départ : toutes allumées, puis deux leviers différents basculés (il en faut donc deux pour revenir)
+    v.lamps = [true, true, true];
+    const a = Math.floor(Math.random() * 3); let b = Math.floor(Math.random() * 2); if (b >= a) b++;
+    for (const k of [a, b]) for (const q of [k - 1, k, k + 1]) if (q >= 0 && q < 3) v.lamps[q] = !v.lamps[q];
+    return true;
+  }
+  if (kind === 'bloc' || kind === 'bloc2'){
+    const n = kind === 'bloc2' ? 2 : 1, used = new Set(), resv = new Set();
+    if (worldMode && world) for (const d of zoneDoorSpecs(world.cur)) resv.add(d.i + ',' + d.j);
+    const sr = startRoom(); resv.add(sr[0] + ',' + sr[1]);
+    resv.add(vaultPick.i + ',' + vaultPick.j);
+    const ok = (i, j) => i >= 0 && j >= 0 && i < Rx && j < Ry && roomMask[rid(i, j)] && !resv.has(i + ',' + j) && !used.has(i + ',' + j);
+    const lines = [];
+    for (let j = 0; j < Ry; j++) for (let i = 0; i < Rx; i++) for (const dv of DIRS){
+      const P = [i, j], B = [i + dv[0], j + dv[1]], M = [i + 2 * dv[0], j + 2 * dv[1]], D = [i + 3 * dv[0], j + 3 * dv[1]];
+      if ([P, B, M, D].every((r) => ok(r[0], r[1]))) lines.push({ P, B, M, D, dv });
+    }
+    for (let k = lines.length - 1; k > 0; k--){ const m = Math.floor(Math.random() * (k + 1)); const t = lines[k]; lines[k] = lines[m]; lines[m] = t; }
+    v.blocks = []; v.dalles = []; v.tracks = [];
+    for (const L of lines){
+      if (v.blocks.length >= n) break;
+      if (![L.P, L.B, L.M, L.D].every((r) => ok(r[0], r[1]))) continue;
+      for (const r of [L.P, L.B, L.M, L.D]) used.add(r[0] + ',' + r[1]);
+      // le rail : trois passages ouverts que la pierre ne referme jamais
+      for (const pr of [[L.P, L.B], [L.B, L.M], [L.M, L.D]]){
+        const a = pr[0], b = pr[1], e = a[0] !== b[0] ? eH(Math.min(a[0], b[0]), a[1]) : eV(a[0], Math.min(a[1], b[1]));
+        openE.add(e); lockE.add(e); const c = edgeCell(e); wall[wIdx(c.x, c.y)] = 0;
+      }
+      v.blocks.push({ i: L.B[0], j: L.B[1], si: L.B[0], sj: L.B[1], ax: 0, ay: 0, anim: 1, pushT: 0, stuckT: 0 });
+      v.dalles.push({ i: L.D[0], j: L.D[1], on: false });
+      v.tracks.push(L);
+    }
+    if (v.blocks.length < n) { for (const b of v.blocks) wall[wIdx(2 * b.i + 1, 2 * b.j + 1)] = 0; v.blocks = []; return false; }
+    for (const b of v.blocks) wall[wIdx(2 * b.i + 1, 2 * b.j + 1)] = 2;     // 2 = un bloc : on bute dessus, le sol se dessine dessous
+    layerDirty = true;
+    return true;
+  }
+  return false;
+}
+function roomFreeForBlock(i, j){
+  const x = ctrX(2 * i + 1), y = ctrY(2 * j + 1);
+  if (Math.hypot(player.x - x, player.y - y) < cell * 1.0) return false;           // jamais sur le mineur
+  for (const en of enemies) if (en.alive && Math.hypot(en.x - x, en.y - y) < cell * 0.8) return false;
+  return !blockAtRoom(i, j);
+}
+function blockAtRoom(i, j){ return vault && vault.blocks ? vault.blocks.find((b) => b.i === i && b.j === j) : null; }
+function moveBlock(b, ti, tj, back){
+  wall[wIdx(2 * b.i + 1, 2 * b.j + 1)] = 0;
+  b.ax = b.i - ti; b.ay = b.j - tj; b.anim = 0; b.i = ti; b.j = tj;
+  wall[wIdx(2 * b.i + 1, 2 * b.j + 1)] = 2;
+  const x = ctrX(2 * b.i + 1), y = ctrY(2 * b.j + 1);
+  puff(x, y + cell * 0.3, reducedMotion ? 1 : 3, '#8A8478', true);
+  if (back){ snd('whoosh', 0.4, 0.9); snd('plate', 0.45, 1.1, 0.08); rings.push({ x, y, r: cell * 0.6, life: 1 }); }
+  else { snd('creak3', 0.55, 0.85); snd('mine2', 0.4, 0.9, 0.05); snd('plate', 0.5, 0.95, 0.16); }
+  buzz(18);
+  checkDalles();
+}
+function checkDalles(){
+  const v = vault; let all = true;
+  for (const d of v.dalles){
+    const was = d.on; d.on = !!blockAtRoom(d.i, d.j);
+    if (d.on && !was){ snd('mclick', 0.6, 1.0, 0.18); snd('latch', 0.5, 1.1, 0.22); addRing(ctrX(2 * d.i + 1), ctrY(2 * d.j + 1)); }
+    if (!d.on) all = false;
+  }
+  if (all && !v.open) openVault();
+}
+function tryPushBlock(b, ax, ay){
+  const ti = b.i + ax, tj = b.j + ay;
+  if (ti < 0 || tj < 0 || ti >= Rx || tj >= Ry || !roomMask[rid(ti, tj)]) return false;
+  const e = ax ? eH(Math.min(b.i, ti), b.j) : eV(b.i, Math.min(b.j, tj));
+  if (!openE.has(e) || blockAtRoom(ti, tj)) return false;
+  const tx = ctrX(2 * ti + 1), ty = ctrY(2 * tj + 1);
+  for (const en of enemies) if (en.alive && Math.hypot(en.x - tx, en.y - ty) < cell * 0.8) return false;
+  for (const d of zdoors) if (d.rx === 2 * ti + 1 && d.ry === 2 * tj + 1) return false;   // jamais devant une porte de zone
+  moveBlock(b, ti, tj, false);
+  return true;
+}
+// rend vrai si l'énigme est d'une des sortes du lot 15 (elle s'est occupée de tout)
+function updateVault2(dt){
+  const v = vault, near = (cx, cy) => Math.hypot(player.x - ctrX(cx), player.y - ctrY(cy)) < cell * 0.38 && !jump;
+  if (v.kind === 'signe'){
+    for (const p of v.signs){
+      const n = near(p.cx, p.cy);
+      if (n && !p.inside){
+        if (p.sign === v.sign){ burst(ctrX(p.cx), ctrY(p.cy), 10, 130, '#FFD680', 'spark'); snd('mclick', 0.5, 1.2); snd('bell', 0.4, 1.4, 0.04); openVault(); }
+        else { p.wrongT = 1; snd('metalB', 0.5, 0.75); addText(ctrX(p.cx), ctrY(p.cy) - 22, 'pas ce signe'); puff(ctrX(p.cx), ctrY(p.cy), 2, '#7A6A5A', true); }
+      }
+      p.inside = n; if (p.wrongT > 0) p.wrongT = Math.max(0, p.wrongT - dt * 2);
+    }
+    return true;
+  }
+  if (v.kind === 'memoire'){
+    const dxp = ctrX(v.dx), dyp = ctrY(v.dy), dd = Math.hypot(player.x - dxp, player.y - dyp);
+    if (!v.show && dd < cell * 3.2 && tnow - v.lastShow > 5){ v.show = { t: 0, k: -1 }; v.step = 0; for (const q of v.plates) q.lit = false; }
+    if (v.show){
+      v.show.t += dt;
+      const k = Math.floor(v.show.t / 0.75);
+      if (k !== v.show.k){
+        v.show.k = k; for (const q of v.plates) q.lit = false;
+        if (k < 3){ const p = v.plates[v.order[k]]; p.lit = true; snd('bell', 0.4, 1.0 + k * 0.25); addRing(ctrX(p.cx), ctrY(p.cy)); }
+      }
+      if (v.show.t > 0.75 * 3 + 0.3){ v.show = null; v.lastShow = tnow; for (const q of v.plates) q.lit = false; }
+      return true;
+    }
+    for (let k = 0; k < v.plates.length; k++){
+      const p = v.plates[k], n = near(p.cx, p.cy);
+      if (n && !p.inside && !p.lit){
+        if (v.order[v.step] === k){
+          p.lit = true; v.step++; burst(ctrX(p.cx), ctrY(p.cy), 8, 120, PLATE_COL[p.col], 'spark'); addRing(ctrX(p.cx), ctrY(p.cy));
+          snd('mclick', 0.5, 1.2); snd('bell', 0.4, 1.0 + v.step * 0.25, 0.03);
+          if (v.step >= 3) openVault();
+        } else {
+          v.step = 0; for (const q of v.plates) q.lit = false; v.lastShow = tnow - 3;     // l'ordre se rejoue bientôt devant la porte
+          snd('metalB', 0.6, 0.7); addText(ctrX(p.cx), ctrY(p.cy) - 22, 'mauvais ordre'); puff(ctrX(p.cx), ctrY(p.cy), 2, '#7A6A5A', true);
+        }
+      }
+      p.inside = n;
+    }
+    return true;
+  }
+  if (v.kind === 'lampes'){
+    for (const L of v.levers){
+      const n = near(L.cx, L.cy);
+      if (n && !L.inside){
+        L.flip = 1;
+        for (const q of [L.k - 1, L.k, L.k + 1]) if (q >= 0 && q < 3) v.lamps[q] = !v.lamps[q];
+        snd('latch', 0.6, 1.0); snd('mclick', 0.4, 1.3, 0.05); burst(ctrX(L.cx), ctrY(L.cy), 6, 90, PLATE_COL[L.k], 'spark');
+        if (v.lamps.every(Boolean)) openVault();
+      }
+      L.inside = n; if (L.flip > 0) L.flip = Math.max(0, L.flip - dt * 3);
+    }
+    return true;
+  }
+  if (v.kind === 'bloc' || v.kind === 'bloc2'){
+    for (const b of v.blocks){
+      if (b.anim < 1){ b.anim = Math.min(1, b.anim + dt / 0.2); continue; }
+      const bx = ctrX(2 * b.i + 1), by = ctrY(2 * b.j + 1), ddx = bx - player.x, ddy = by - player.y;
+      const ax = Math.abs(ddx) > Math.abs(ddy) ? Math.sign(ddx) : 0, ay = ax ? 0 : Math.sign(ddy);
+      const pushing = Math.hypot(ddx, ddy) < cell * 1.2 && (pushX * ax + pushY * ay) > 0.7 && !jump;
+      if (pushing){
+        b.pushT += dt;
+        if (b.pushT > 0.18){
+          if (tryPushBlock(b, ax, ay)){ b.pushT = 0; b.stuckT = 0; }
+          else {
+            b.stuckT += dt;
+            // un bloc coincé contre lequel on insiste revient à sa place (jamais enfermé, jamais bloqué pour de bon)
+            if (b.stuckT > 1.6 && (b.i !== b.si || b.j !== b.sj) && roomFreeForBlock(b.si, b.sj)){ b.stuckT = 0; b.pushT = 0; addText(bx, by - 24, 'le bloc revient à sa rune'); moveBlock(b, b.si, b.sj, true); }
+          }
+        }
+      } else { b.pushT = 0; b.stuckT = 0; }
+      // la rune de départ : marcher dessus ramène le bloc
+      // (on marche sur la rune : le bloc revient quand on en sort, jamais sur nous)
+      if ((b.i !== b.si || b.j !== b.sj) && near(2 * b.si + 1, 2 * b.sj + 1)) b.runeArmed = true;
+      else if (b.runeArmed && roomFreeForBlock(b.si, b.sj)){ b.runeArmed = false; b.stuckT = 0; moveBlock(b, b.si, b.sj, true); }
+    }
+    return true;
+  }
+  return false;
+}
+function drawSignGlyph(k, x, y, r){
+  ctx.beginPath();
+  if (k === 0) ctx.arc(x, y, r, 0, Math.PI * 2);
+  else if (k === 1){ ctx.moveTo(x, y - r); ctx.lineTo(x + r * 0.95, y + r * 0.75); ctx.lineTo(x - r * 0.95, y + r * 0.75); ctx.closePath(); }
+  else if (k === 2) ctx.rect(x - r * 0.8, y - r * 0.8, r * 1.6, r * 1.6);
+  else { ctx.moveTo(x, y - r); ctx.lineTo(x + r, y); ctx.lineTo(x, y + r); ctx.lineTo(x - r, y); ctx.closePath(); }
+}
+// les éléments au sol des énigmes du lot 15 (blocs, dalles, rails, signes, leviers)
+function drawPuzzle2(){
+  const v = vault;
+  if (v.signs) for (const p of v.signs){
+    const x = ctrX(p.cx), y = ctrY(p.cy), r = cell * 0.32;
+    ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.beginPath(); ctx.ellipse(x, y + r * 0.2, r * 1.05, r * 0.8, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = v.open && p.sign === v.sign ? '#5A4A2A' : '#3A3A34'; ctx.fillRect(x - r, y - r, r * 2, r * 2);
+    ctx.strokeStyle = p.wrongT > 0 ? 'rgba(220,120,90,' + (0.5 + 0.5 * p.wrongT).toFixed(2) + ')' : 'rgba(210,200,180,0.7)'; ctx.lineWidth = 1.6; ctx.strokeRect(x - r, y - r, r * 2, r * 2);
+    ctx.strokeStyle = '#E8DCC0'; ctx.lineWidth = 2; drawSignGlyph(p.sign, x, y, r * 0.55); ctx.stroke();
+  }
+  if (v.levers) for (const L of v.levers){
+    const x = ctrX(L.cx), y = ctrY(L.cy), r = cell * 0.3, c = PLATE_COL[L.k];
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fillStyle = 'rgba(22,30,26,0.92)'; ctx.fill(); ctx.lineWidth = 2.4; ctx.strokeStyle = c; ctx.stroke();
+    const an = (v.lamps[L.k] ? -0.7 : 0.7) * (1 - L.flip * 0.3);
+    ctx.save(); ctx.translate(x, y); ctx.rotate(an); ctx.fillStyle = '#C9C1B0'; ctx.fillRect(-r * 0.12, -r * 0.95, r * 0.24, r * 0.95); ctx.beginPath(); ctx.arc(0, -r * 0.95, r * 0.2, 0, Math.PI * 2); ctx.fillStyle = c; ctx.fill(); ctx.restore();
+  }
+  if (v.blocks){
+    // les rails : deux rainures au sol du départ du bloc jusqu'à sa dalle
+    for (const L of v.tracks){
+      const x1 = ctrX(2 * L.P[0] + 1), y1 = ctrY(2 * L.P[1] + 1), x2 = ctrX(2 * L.D[0] + 1), y2 = ctrY(2 * L.D[1] + 1), o = cell * 0.18;
+      ctx.strokeStyle = 'rgba(20,16,10,0.45)'; ctx.lineWidth = 2;
+      for (const s of [-1, 1]){ ctx.beginPath(); ctx.moveTo(x1 + (L.dv[1] ? s * o : 0), y1 + (L.dv[0] ? s * o : 0)); ctx.lineTo(x2 + (L.dv[1] ? s * o : 0), y2 + (L.dv[0] ? s * o : 0)); ctx.stroke(); }
+    }
+    for (const b of v.blocks) if (b.i !== b.si || b.j !== b.sj){
+      const x = ctrX(2 * b.si + 1), y = ctrY(2 * b.sj + 1);
+      ctx.strokeStyle = 'rgba(160,200,220,' + (0.35 + 0.2 * Math.sin(tnow * 3)).toFixed(2) + ')'; ctx.lineWidth = 1.6;
+      ctx.beginPath(); ctx.arc(x, y, cell * 0.28, 0, Math.PI * 2); ctx.stroke(); ctx.beginPath(); ctx.moveTo(x - cell * 0.12, y); ctx.lineTo(x + cell * 0.12, y); ctx.moveTo(x, y - cell * 0.12); ctx.lineTo(x, y + cell * 0.12); ctx.stroke();
+    }
+    for (const d of v.dalles){
+      const x = ctrX(2 * d.i + 1), y = ctrY(2 * d.j + 1), r = cell * 0.42;
+      if (d.on){ const g2 = ctx.createRadialGradient(x, y, 0, x, y, cell); g2.addColorStop(0, 'rgba(255,214,128,0.45)'); g2.addColorStop(1, 'rgba(255,214,128,0)'); ctx.fillStyle = g2; ctx.beginPath(); ctx.arc(x, y, cell, 0, Math.PI * 2); ctx.fill(); }
+      ctx.fillStyle = '#2E2C26'; ctx.fillRect(x - r, y - r, r * 2, r * 2);
+      ctx.strokeStyle = d.on ? '#FFD680' : 'rgba(255,214,128,0.6)'; ctx.lineWidth = 2; ctx.strokeRect(x - r, y - r, r * 2, r * 2);
+      ctx.strokeRect(x - r * 0.45, y - r * 0.45, r * 0.9, r * 0.9);
+    }
+    for (const b of v.blocks){
+      const e = 1 - Math.pow(1 - b.anim, 3);
+      const x = ctrX(2 * b.i + 1) + b.ax * cell * 2 * (1 - e), y = ctrY(2 * b.j + 1) + b.ay * cell * 2 * (1 - e), s = cell * 0.44, h = cell * 0.22;
+      ctx.fillStyle = 'rgba(0,0,0,0.4)'; ctx.fillRect(x - s + 3, y - s + 5, s * 2, s * 2);
+      ctx.fillStyle = '#6E665A'; ctx.fillRect(x - s, y - s + h, s * 2, s * 2 - h * 0.2);          // face avant
+      ctx.fillStyle = '#A39A8A'; ctx.fillRect(x - s, y - s - h * 0.4, s * 2, s * 2 - h * 0.6);    // dessus
+      ctx.strokeStyle = 'rgba(16,12,8,0.9)'; ctx.lineWidth = 1.4; ctx.strokeRect(x - s, y - s - h * 0.4, s * 2, s * 2 + h * 0.4);
+      ctx.strokeStyle = 'rgba(201,123,61,0.85)'; ctx.lineWidth = 1.6; ctx.beginPath(); ctx.arc(x, y - h * 0.4, s * 0.38, 0, Math.PI * 2); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x - s * 0.2, y - h * 0.4); ctx.lineTo(x + s * 0.2, y - h * 0.4); ctx.stroke();
+    }
+  }
+}
+// ce que porte la porte fermée : le signe, les lampes, les cases de la mémoire, l'encoche du bloc
+function drawDoorGlyph(mx, my){
+  const v = vault;
+  if (v.kind === 'signe'){ ctx.strokeStyle = '#FFE9B8'; ctx.lineWidth = 2; drawSignGlyph(v.sign, mx, my, cell * 0.2); ctx.stroke(); }
+  else if (v.kind === 'lampes'){
+    for (let k = 0; k < 3; k++){
+      const px = mx + (k - 1) * cell * 0.3, c = PLATE_COL[k];
+      ctx.beginPath(); ctx.arc(px, my, cell * 0.11, 0, Math.PI * 2); ctx.fillStyle = v.lamps[k] ? '#FFF2C0' : 'rgba(20,14,8,0.9)'; ctx.fill();
+      ctx.lineWidth = 1.6; ctx.strokeStyle = c; ctx.stroke();
+      if (v.lamps[k]){ const g2 = ctx.createRadialGradient(px, my, 0, px, my, cell * 0.3); g2.addColorStop(0, 'rgba(255,230,160,0.5)'); g2.addColorStop(1, 'rgba(255,230,160,0)'); ctx.fillStyle = g2; ctx.beginPath(); ctx.arc(px, my, cell * 0.3, 0, Math.PI * 2); ctx.fill(); }
+    }
+  } else if (v.kind === 'memoire'){
+    for (let k = 0; k < 3; k++){ const px = mx + (k - 1) * cell * 0.3; ctx.beginPath(); ctx.arc(px, my, cell * 0.1, 0, Math.PI * 2); ctx.fillStyle = k < v.step ? '#FFE9B8' : 'rgba(20,14,8,0.9)'; ctx.fill(); ctx.lineWidth = 1.2; ctx.strokeStyle = '#FFD680'; ctx.stroke(); }
+  } else if (v.kind === 'bloc' || v.kind === 'bloc2'){
+    for (let k = 0; k < v.dalles.length; k++){ const px = mx + (k - (v.dalles.length - 1) / 2) * cell * 0.36, r = cell * 0.12; ctx.fillStyle = v.dalles[k].on ? '#FFD680' : 'rgba(20,14,8,0.9)'; ctx.fillRect(px - r, my - r, r * 2, r * 2); ctx.strokeStyle = '#FFD680'; ctx.lineWidth = 1.2; ctx.strokeRect(px - r, my - r, r * 2, r * 2); }
+  }
+}
+
 // place l'énigme et le joyau (après la remise à zéro des trésors de l'étage)
 function setupVault(){
   vault = null; hasKey = false;
@@ -977,6 +1233,14 @@ function setupVault(){
     if (!rs.length){ vault = null; return; }
     vault.plates.push(Object.assign(cellPos(rs[0]), { col: 3, lit: false, inside: false }));
   }
+  if (['signe', 'memoire', 'lampes', 'bloc', 'bloc2'].indexOf(vault.kind) >= 0 && !setupVault2(vault.kind, pool, cellPos)){
+    // repli : la séquence (jamais une zone sans énigme)
+    vault.kind = 'sequence'; vault.plates = [];
+    let rs = pool(3, 14); if (rs.length < 3) rs = pool(1, 30);
+    if (rs.length < 3){ vault = null; return; }
+    for (let k = 0; k < 3; k++) vault.plates.push(Object.assign(cellPos(rs[k]), { col: k, lit: false, inside: false }));
+    vault.order = [0, 1, 2]; for (let k = 2; k > 0; k--){ const m = Math.floor(Math.random() * (k + 1)); const t = vault.order[k]; vault.order[k] = vault.order[m]; vault.order[m] = t; }
+  }
   treasures.push({ i: v.i, j: v.j, big: true, kind: 'joyau', x: ctrX(vault.cx), y: ctrY(vault.cy), life: 1e9, rot: 0 });
 }
 function openVault(){
@@ -995,9 +1259,11 @@ function updateVault(dt){
   // l'aide, une seule fois par sorte d'énigme, quand on s'approche
   if (!vault.open && !vaultHint[vault.kind] && dd < cell * 3.6){
     vaultHint[vault.kind] = true;
-    addText(dxp, dyp - 26, { sequence: 'les points : l\u2019ordre des plaques', cle: 'il faut une clé', minute: 'une plaque ouvre la porte un instant' }[vault.kind]);
+    addText(dxp, dyp - 26, { sequence: 'les points : l\u2019ordre des plaques', cle: 'il faut une clé', minute: 'une plaque ouvre la porte un instant',
+      signe: 'trouve la dalle au même signe', memoire: 'regarde bien l\u2019ordre, puis refais-le', lampes: 'allume les trois lampes', bloc: 'pousse le bloc sur la dalle', bloc2: 'deux blocs, deux dalles' }[vault.kind]);
   }
   if (vault.open) return;
+  if (updateVault2(dt)) return;
   if (vault.kind === 'sequence'){
     for (let k = 0; k < vault.plates.length; k++){
       const p = vault.plates[k], near = Math.hypot(player.x - ctrX(p.cx), player.y - ctrY(p.cy)) < cell * 0.38 && !jump;
@@ -1069,6 +1335,7 @@ function drawPuzzle(){
     ctx.fillStyle = g2; ctx.beginPath(); ctx.arc(k.x, k.y, cell * 1.0, 0, Math.PI * 2); ctx.fill();
     ctx.save(); ctx.translate(k.x, k.y + bob); drawKeyIcon(s); ctx.restore();
   }
+  drawPuzzle2();
   // la porte : un sceau doré tant qu'elle est fermée, avec l'énigme dessus
   if (!vault.open){
     const closed = wall[wIdx(vault.dx, vault.dy)] === 1;
@@ -1076,6 +1343,7 @@ function drawPuzzle(){
       ctx.fillStyle = 'rgba(40,28,10,0.55)'; ctx.fillRect(x0, y0, cell, cell);
       ctx.strokeStyle = 'rgba(255,214,128,' + (0.7 + 0.3 * pu).toFixed(3) + ')'; ctx.lineWidth = 2; ctx.strokeRect(x0 + 1.5, y0 + 1.5, cell - 3, cell - 3);
     }
+    drawDoorGlyph(mx, my);
     if (vault.kind === 'sequence'){
       for (let k = 0; k < 3; k++){
         const px = mx + (k - 1) * cell * 0.3, py = my, done = k < vault.step, c = PLATE_COL[vault.order[k]];
@@ -1113,6 +1381,7 @@ function spawnTreasure(){
     const i = k % Rx, j = (k - i) / Rx;
     if (d[k] < 0 || (i === pr[0] && j === pr[1])) continue;
     if (pick && pick.i === i && pick.j === j) continue;
+    if (blockAtRoom(i, j)) continue;                    // jamais sous un bloc
     let taken = false;
     for (const t of treasures) if (t.i === i && t.j === j){ taken = true; break; }
     if (taken) continue;
@@ -1214,21 +1483,21 @@ function pickBoon(k){
 // enigme = l'énigme de la zone : la résoudre ouvre sa chambre forte et ses portes (les éclats ne débloquent plus rien).
 const WORLD = { start: 'galeries', cols: 3, rows: 5, zones: {
   galeries:    { nom: 'Les Galeries',   style: 0,  seed: 1101, diff: 0, quota: 8,  region: 'ouest',  g: [0, 4], enigme: 'sequence', map: [0.500, 0.900] },
-  caverne:     { nom: 'La Caverne',     style: 1,  seed: 2202, diff: 1, quota: 9,  region: 'ouest',  g: [0, 3], enigme: 'minute',   map: [0.188, 0.660], sceau: true },
-  puits:       { nom: 'Le Puits',       style: 2,  seed: 3303, diff: 1, quota: 9,  region: 'ouest',  g: [0, 2], enigme: 'sequence', map: [0.150, 0.468], sceau: true },
+  caverne:     { nom: 'La Caverne',     style: 1,  seed: 2202, diff: 1, quota: 9,  region: 'ouest',  g: [0, 3], enigme: 'signe',   map: [0.188, 0.660], sceau: true },
+  puits:       { nom: 'Le Puits',       style: 2,  seed: 3303, diff: 1, quota: 9,  region: 'ouest',  g: [0, 2], enigme: 'bloc', map: [0.150, 0.468], sceau: true },
   cendre:      { nom: 'La Cendre',      style: 3,  seed: 4404, diff: 2, quota: 10, region: 'ouest',  g: [0, 1], enigme: 'minute',   map: [0.236, 0.300], sceau: true },
   donjon:      { nom: 'Le Donjon',      style: 12, seed: 5505, diff: 3, quota: 12, region: 'ouest',  g: [0, 0], map: [0.215, 0.140], hint: 'un colosse garde ces murs',
                  boss: { nom: 'le Colosse de cendre', hp: 3, speed: 1.7, col: [255, 140, 70] } },
-  citernes:    { nom: 'Les Citernes',   style: 6,  seed: 6606, diff: 2, quota: 10, region: 'centre', g: [1, 4], enigme: 'sequence', map: [0.455, 0.600], apres: 'donjon' },
-  scriptorium: { nom: 'Le Scriptorium', style: 7,  seed: 7707, diff: 2, quota: 10, region: 'centre', g: [1, 3], enigme: 'minute',   map: [0.636, 0.520], sceau: true },
-  jardin:      { nom: 'Le Jardin',      style: 8,  seed: 8808, diff: 3, quota: 10, region: 'centre', g: [1, 2], enigme: 'sequence', map: [0.396, 0.398], sceau: true },
-  geode:       { nom: 'La Géode',       style: 10, seed: 9909, diff: 3, quota: 11, region: 'centre', g: [1, 1], enigme: 'minute',   map: [0.607, 0.385], sceau: true },
+  citernes:    { nom: 'Les Citernes',   style: 6,  seed: 6606, diff: 2, quota: 10, region: 'centre', g: [1, 4], enigme: 'memoire', map: [0.455, 0.600], apres: 'donjon' },
+  scriptorium: { nom: 'Le Scriptorium', style: 7,  seed: 7707, diff: 2, quota: 10, region: 'centre', g: [1, 3], enigme: 'lampes',   map: [0.636, 0.520], sceau: true },
+  jardin:      { nom: 'Le Jardin',      style: 8,  seed: 8808, diff: 3, quota: 10, region: 'centre', g: [1, 2], enigme: 'bloc', map: [0.396, 0.398], sceau: true },
+  geode:       { nom: 'La Géode',       style: 10, seed: 9909, diff: 3, quota: 11, region: 'centre', g: [1, 1], enigme: 'signe',   map: [0.607, 0.385], sceau: true },
   citadelle:   { nom: 'La Citadelle',   style: 12, seed: 1212, diff: 4, quota: 12, region: 'centre', g: [1, 0], map: [0.493, 0.170], hint: 'un colosse garde ces murs',
                  boss: { nom: 'le Colosse de cristal', hp: 4, speed: 1.85, col: [190, 130, 255] } },
-  marais:      { nom: 'Le Marais',      style: 11, seed: 1313, diff: 3, quota: 10, region: 'est',    g: [2, 4], enigme: 'sequence', map: [0.764, 0.779], apres: 'citadelle' },
-  dunes:       { nom: 'Les Dunes',      style: 4,  seed: 1414, diff: 3, quota: 11, region: 'est',    g: [2, 3], enigme: 'minute',   map: [0.803, 0.607], sceau: true },
-  mosaiques:   { nom: 'Les Mosaïques',  style: 9,  seed: 1515, diff: 4, quota: 11, region: 'est',    g: [2, 2], enigme: 'sequence', map: [0.789, 0.449], sceau: true },
-  glaciere:    { nom: 'La Glacière',    style: 5,  seed: 1616, diff: 4, quota: 12, region: 'est',    g: [2, 1], enigme: 'minute',   map: [0.850, 0.330], sceau: true },
+  marais:      { nom: 'Le Marais',      style: 11, seed: 1313, diff: 3, quota: 10, region: 'est',    g: [2, 4], enigme: 'minute', map: [0.764, 0.779], apres: 'citadelle' },
+  dunes:       { nom: 'Les Dunes',      style: 4,  seed: 1414, diff: 3, quota: 11, region: 'est',    g: [2, 3], enigme: 'memoire',   map: [0.803, 0.607], sceau: true },
+  mosaiques:   { nom: 'Les Mosaïques',  style: 9,  seed: 1515, diff: 4, quota: 11, region: 'est',    g: [2, 2], enigme: 'lampes', map: [0.789, 0.449], sceau: true },
+  glaciere:    { nom: 'La Glacière',    style: 5,  seed: 1616, diff: 4, quota: 12, region: 'est',    g: [2, 1], enigme: 'bloc2',   map: [0.850, 0.330], sceau: true },
   forteresse:  { nom: 'La Forteresse',  style: 12, seed: 1717, diff: 5, quota: 12, region: 'est',    g: [2, 0], map: [0.790, 0.170], hint: 'un colosse garde ces murs',
                  boss: { nom: 'le Colosse de glace', hp: 5, speed: 2.0, col: [140, 210, 255] } },
 } };
@@ -1617,8 +1886,9 @@ function farRooms(minD){
   const pr = playerRoom();
   const d = roomDistances(pr[0], pr[1]);
   let pool = [];
-  for (let k = 0; k < d.length; k++) if (d[k] >= minD) pool.push(k);
-  if (!pool.length) for (let k = 0; k < d.length; k++) if (d[k] >= 3) pool.push(k);
+  const free = (k) => !blockAtRoom(k % Rx, (k - k % Rx) / Rx);
+  for (let k = 0; k < d.length; k++) if (d[k] >= minD && free(k)) pool.push(k);
+  if (!pool.length) for (let k = 0; k < d.length; k++) if (d[k] >= 3 && free(k)) pool.push(k);
   for (let k = pool.length - 1; k > 0; k--){ const m = Math.floor(Math.random() * (k + 1)); const t = pool[k]; pool[k] = pool[m]; pool[m] = t; }
   return pool;
 }
@@ -2023,6 +2293,7 @@ function spawnBonus(){
     const i = k % Rx, j = (k - i) / Rx;
     if (d[k] < 0 || (i === pr[0] && j === pr[1])) continue;
     if (pick && pick.i === i && pick.j === j) continue;
+    if (blockAtRoom(i, j)) continue;                    // jamais sous un bloc
     let taken = false;
     for (const t of treasures) if (t.i === i && t.j === j){ taken = true; break; }
     if (taken) continue;
@@ -3568,7 +3839,7 @@ function buildLayer(){
   // 1) sol dallé + ombres portées des murs
   for (let cy = 0; cy < gh; cy++){
     for (let cx = 0; cx < gw; cx++){
-      if (wall[wIdx(cx, cy)]) continue;
+      if (wall[wIdx(cx, cy)] === 1) continue;
       const rx = originX + cx * cell, ry = originY + cy * cell;
       const ox = Math.floor(hash01(cx * 3.1, cy * 1.7) * span);
       const oy = Math.floor(hash01(cy * 2.3, cx * 4.9) * span);
@@ -3616,7 +3887,7 @@ function buildLayer(){
   // 2) murs : dessus de pierre, face avant, biseau, mousse
   for (let cy = 0; cy < gh; cy++){
     for (let cx = 0; cx < gw; cx++){
-      if (!wall[wIdx(cx, cy)]) continue;
+      if (wall[wIdx(cx, cy)] !== 1) continue;
       const rx = originX + cx * cell, ry = originY + cy * cell;
       const h = hash01(cx, cy);
       const below = !isWall(cx, cy + 1);
