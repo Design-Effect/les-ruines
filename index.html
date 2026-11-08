@@ -164,6 +164,14 @@
   @keyframes breathe{0%,100%{opacity:.45}50%{opacity:1}}
 
   #boons{background:rgba(10,16,12,.8)}
+  #etabli{background:rgba(10,16,12,.84)}
+  #etabli h2{font-family:'Cinzel',Georgia,serif;font-weight:600;font-size:22px;letter-spacing:.14em;text-transform:uppercase;color:var(--copper-light)}
+  #etabliCards{margin-top:22px;display:flex;flex-direction:column;gap:12px;width:min(88vw,360px)}
+  .boon.off{opacity:.45}
+  /* les éclats de la sacoche : en bas à droite, dans la bande du pouce (mode Aventure) */
+  #eclatHud{position:fixed;right:16px;bottom:max(16px, calc(env(safe-area-inset-bottom) + 10px));z-index:6;display:none;align-items:center;gap:6px;font:600 14px 'Cinzel',Georgia,serif;color:#F0EAD9;pointer-events:none}
+  body.world #eclatHud{display:flex}
+  #eclatHud i{width:11px;height:11px;transform:rotate(45deg);background:linear-gradient(135deg,#FFE2A0,#C97B3D);border:1px solid rgba(40,20,6,.8)}
   #boons h2{font-family:'Cinzel',Georgia,serif;font-weight:600;font-size:22px;letter-spacing:.14em;text-transform:uppercase;color:var(--copper-light)}
   .boonsub{margin-top:6px;font-size:14px;color:rgba(240,234,217,.6)}
   #boonCards{margin-top:22px;display:flex;flex-direction:column;gap:12px;width:min(88vw,360px)}
@@ -311,6 +319,13 @@
   <canvas id="mapCanvas"></canvas>
   <div class="hint">Touche pour revenir</div>
 </div>
+
+<div id="etabli" class="screen hidden">
+  <h2>L&rsquo;établi</h2>
+  <div class="boonsub" id="etabliSub"></div>
+  <div id="etabliCards"></div>
+</div>
+<div id="eclatHud"></div>
 
 <div id="boons" class="screen hidden">
   <h2>Choisis ton bonus</h2>
@@ -647,7 +662,7 @@ function newMaze(){
   for (;;){
     roomMask = makeMask(kind);
     vaultPick = null;
-    if (stageIdx >= 1 && !bossZone()) pickVaultRoom();     // un donjon n'a pas de chambre forte : c'est la salle du colosse
+    if (stageIdx >= 1 && !bossZone() && !inCamp()) pickVaultRoom();     // un donjon n'a pas de chambre forte : c'est la salle du colosse
     caches = []; if (worldMode && world) pickCacheRooms();   // lot 16 : les cachettes, avant de creuser le labyrinthe
     openE = new Set();
     // génération : remonte-arrière itératif → labyrinthe parfait (connecté) dans le format
@@ -753,6 +768,7 @@ function waveDelay(){
 }
 
 function makeWave(){
+  if (inCamp()) return false;                       // un refuge : la pierre ne bouge pas
   const reg = Math.min(REGION_MAX, REGION + stageIdx * 0.015);
   const rw = Math.max(2, Math.round(Rx * reg));
   const rh = Math.max(2, Math.round(Ry * reg));
@@ -1133,7 +1149,7 @@ let caches = [];
 const COFFRE_MULT = 15;
 function pickCacheRooms(){
   caches = [];
-  const z = WORLD.zones[world.cur]; if (z.boss || z.id === WORLD.start) return;
+  const z = WORLD.zones[world.cur]; if (z.boss || z.camp || z.id === WORLD.start) return;
   const n = z.diff >= 3 ? 2 : 1;
   const resv = new Set();
   for (const d of zoneDoorSpecs(world.cur)) resv.add(d.i + ',' + d.j);
@@ -1172,7 +1188,7 @@ function updateCaches(dt){
     if (Math.hypot(player.x - x, player.y - y) < player.rad + cell * 0.35){
       c.open = true; st.coffres = st.coffres || []; if (st.coffres.indexOf(k) < 0) st.coffres.push(k);
       combo = comboTimer > 0 ? combo + 1 : 1; comboTimer = comboWin();
-      const pts = TREASURE_PTS * COFFRE_MULT * combo; score += pts; stat.coffre = (stat.coffre || 0) + 1;
+      const pts = TREASURE_PTS * COFFRE_MULT * combo; score += pts; stat.coffre = (stat.coffre || 0) + 1; addEclats(5);
       addText(x, y - 36, 'coffre !', true); addText(x, y - 16, '+' + pts, true);
       burst(x, y, reducedMotion ? 10 : 30, 220, '#FFD680', 'spark'); burst(x, y, reducedMotion ? 3 : 8, 120, '#8A6A48');
       rings.push({ x, y, r: cell * 0.8, life: 1 }); addRing(x, y);
@@ -1633,6 +1649,7 @@ function drawKeyIcon(s){
   ctx.fillRect(s * 0.75, s * 0.12, s * 0.16, s * 0.3); ctx.fillRect(s * 0.5, s * 0.12, s * 0.16, s * 0.22);
 }
 function spawnTreasure(){
+  if (inCamp()) return;
   const pr = playerRoom();
   const d = roomDistances(pr[0], pr[1]);
   // relique : rare, une seule à la fois, posée plus loin
@@ -1679,7 +1696,7 @@ function nearMiss(){
   buzz(20);
 }
 function pickDur(){ return PICK_DURATION + (boons.pioche ? 4 : 0); }
-function pickMax(){ return PICK_USES + (boons.pioche ? 2 : 0); }
+function pickMax(){ return PICK_USES + (worldMode && world ? (world.renforts || 0) : 0) + (boons.pioche ? 2 : 0); }
 function refillPick(){ pickUses = pickMax(); hasPick = true; pickRegenT = PICK_REGEN; }
 // un coup donné use la pioche ; à zéro elle est émoussée (toujours en main, elle ne frappe plus)
 function usePick(){
@@ -1778,6 +1795,101 @@ const WORLD = { start: 'galeries', cols: 3, rows: 5, zones: {
     z.doors = z.links.map((l) => l.to);
   }
 })();
+// ---------- Lot 18 : les refuges et leurs établis ----------
+// Trois zones à part, sans ennemis, sans pierre qui bouge, sans trésors : on y entre par une porte latérale d'une zone de la colonne.
+// L'établi renforce ou aiguise la pioche contre des éclats gardés dans la sacoche.
+const CAMPS = {
+  forge:     { nom: 'La Forge',     host: 'puits',       side: -1, style: 3, seed: 2121 },
+  atelier:   { nom: 'L’Atelier', host: 'scriptorium', side: 1,  style: 7, seed: 2323 },
+  campement: { nom: 'Le Campement', host: 'dunes',       side: 1,  style: 4, seed: 2525 },
+};
+for (const id in CAMPS){
+  const c = CAMPS[id], h = WORLD.zones[c.host];
+  WORLD.zones[id] = { id, nom: c.nom, style: c.style, seed: c.seed, diff: 0, quota: 999, region: h.region, camp: true, host: c.host, map: h.map,
+                      hint: 'un refuge : ni ennemis, ni pierre qui bouge', links: [{ to: c.host, dx: -c.side, dy: 0 }], doors: [c.host] };
+  h.links.push({ to: id, dx: c.side, dy: 0 }); h.doors.push(id);
+}
+const RENFORT_COUT = [15, 25, 40], AIGUISER_COUT = 5;
+let etabli = null, etabliLock = false;
+function inCamp(){ return worldMode && world && !!WORLD.zones[world.cur].camp; }
+// le refuge : une grande salle ouverte de cinq rangées autour de sa porte, le reste est roc
+function campLayout(doorRow){
+  const j0 = Math.max(0, Math.min(Ry - 5, doorRow - 2));
+  roomMask = new Uint8Array(Rx * Ry);
+  for (let j = j0; j < j0 + 5; j++) for (let i = 0; i < Rx; i++) roomMask[rid(i, j)] = 1;
+  openE = new Set(); fixedE = new Set(); lockE = new Set(); vaultPick = null; caches = [];
+  forEachEdge((e) => openE.add(e));
+  buildWalls(); layerDirty = true;
+  etabli = { cx: 2 * Math.floor(Rx / 2) + 1, cy: 2 * Math.min(j0 + 2, Ry - 1) + 1 };
+}
+function eclatHud(){
+  const el = document.getElementById('eclatHud'); if (!el) return;
+  const n = worldMode && world ? (world.eclats || 0) : -1;
+  if (el.dataset.n !== String(n)){ el.dataset.n = String(n); el.innerHTML = n < 0 ? '' : '<i></i>' + n; }
+}
+function addEclats(n){ if (!worldMode || !world) return; world.eclats = (world.eclats || 0) + n; }
+function updateEtabli(){
+  if (!etabli || !inCamp()) return;
+  const inRoom = cellOfX(player.x) === etabli.cx && cellOfY(player.y) === etabli.cy;
+  if (!inRoom){ etabliLock = false; return; }
+  if (!etabliLock && !jump){ etabliLock = true; openEtabli(); }
+}
+function openEtabli(){
+  state = 'etabli'; for (const k in keys) keys[k] = false;
+  renderEtabli();
+  document.getElementById('etabli').classList.remove('hidden');
+  snd('wood', 0.6, 0.95); snd('latch', 0.5, 1.05, 0.06); buzz(15);
+}
+function renderEtabli(){
+  const r = world.renforts || 0, e = world.eclats || 0, cout = RENFORT_COUT[r], full = pickUses >= pickMax();
+  document.getElementById('etabliSub').textContent = 'Ta sacoche : ' + e + ' éclat' + (e > 1 ? 's' : '') + ' · ta pioche : ' + pickUses + ' / ' + pickMax() + ' coups';
+  const box = document.getElementById('etabliCards'); box.innerHTML = '';
+  const card = (titre, txt, prix, ok, fn, col) => {
+    const b = document.createElement('button'); b.type = 'button'; b.className = 'boon' + (ok ? '' : ' off'); b.style.setProperty('--c', col);
+    b.innerHTML = '<small>' + prix + '</small><b>' + titre + '</b><span>' + txt + '</span>';
+    b.addEventListener('click', (ev) => { ev.stopPropagation(); if (ok) fn(); else { snd('metalB', 0.4, 0.8); } });
+    box.appendChild(b);
+  };
+  if (r < RENFORT_COUT.length) card('Renforcer la pioche', '+1 coup pour toujours (' + pickMax() + ' → ' + (pickMax() + 1) + ')', cout + ' éclats', e >= cout, () => etabliAct('renfort'), '#E8A04C');
+  else card('La pioche est au plus fort', 'elle ne se renforce plus', 'fait', false, () => {}, '#8A9B90');
+  card('Aiguiser', full ? 'elle est déjà affûtée' : 'tous ses coups rendus', AIGUISER_COUT + ' éclats', !full && e >= AIGUISER_COUT, () => etabliAct('aiguiser'), '#7FD6F0');
+  card('Plus tard', 'reprendre la route', '', true, closeEtabli, '#C9C1B0');
+}
+function etabliAct(k){
+  if (k === 'renfort'){
+    const r = world.renforts || 0, cout = RENFORT_COUT[r]; if (cout == null || world.eclats < cout) return;
+    world.eclats -= cout; world.renforts = r + 1; pickUses = Math.min(pickMax(), pickUses + 1); hasPick = pickUses > 0;
+    snd('metalA', 0.8, 0.9); snd('plate', 0.6, 1.0, 0.12); snd('metalA', 0.7, 1.05, 0.26); snd('bell', 0.5, 1.2, 0.4); buzz([30, 40, 30]);
+    burst(ctrX(etabli.cx), ctrY(etabli.cy), reducedMotion ? 8 : 24, 200, '#FFB070', 'spark');
+  } else if (k === 'aiguiser'){
+    if (world.eclats < AIGUISER_COUT || pickUses >= pickMax()) return;
+    world.eclats -= AIGUISER_COUT; refillPick();
+    for (let q = 0; q < 4; q++) snd('mclick', 0.4, 1.3 + q * 0.08, q * 0.09); snd('glassH', 0.35, 1.4, 0.4); buzz(20);
+    burst(ctrX(etabli.cx), ctrY(etabli.cy), reducedMotion ? 6 : 16, 160, '#D8E4E8', 'spark');
+  }
+  saveWorld(); renderEtabli();
+}
+function closeEtabli(){
+  if (state !== 'etabli') return;
+  document.getElementById('etabli').classList.add('hidden'); state = 'playing'; snd('click3', 0.4, 0.9);
+}
+// l'établi : un plan de travail en bois, une enclume, une lanterne, une lueur chaude qui dit « ici on est à l'abri »
+function drawEtabli(){
+  if (!etabli || !inCamp()) return;
+  const x = ctrX(etabli.cx), y = ctrY(etabli.cy), pu = 0.5 + 0.5 * Math.sin(tnow * 2.2);
+  const g2 = ctx.createRadialGradient(x, y, 0, x, y, cell * 3.2); g2.addColorStop(0, 'rgba(255,190,110,' + (0.28 + 0.08 * pu).toFixed(3) + ')'); g2.addColorStop(1, 'rgba(255,190,110,0)');
+  ctx.fillStyle = g2; ctx.beginPath(); ctx.arc(x, y, cell * 3.2, 0, Math.PI * 2); ctx.fill();
+  const w = cell * 0.9, h = cell * 0.36;
+  ctx.fillStyle = 'rgba(0,0,0,0.4)'; ctx.fillRect(x - w / 2 + 3, y - h / 2 + 5, w, h);
+  ctx.fillStyle = '#5C3E22'; ctx.fillRect(x - w / 2 + 2, y + h / 2, cell * 0.08, cell * 0.22); ctx.fillRect(x + w / 2 - cell * 0.1, y + h / 2, cell * 0.08, cell * 0.22);
+  ctx.fillStyle = '#946638'; ctx.fillRect(x - w / 2, y - h / 2, w, h); ctx.strokeStyle = 'rgba(30,16,6,0.95)'; ctx.lineWidth = 1.3; ctx.strokeRect(x - w / 2, y - h / 2, w, h);
+  ctx.fillStyle = '#4A4E52'; ctx.beginPath(); ctx.moveTo(x - w * 0.3, y - h * 0.5); ctx.lineTo(x + w * 0.05, y - h * 0.5); ctx.lineTo(x + w * 0.16, y - h * 0.9); ctx.lineTo(x - w * 0.36, y - h * 0.9); ctx.closePath(); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = '#A7B8BD'; ctx.fillRect(x + w * 0.18, y - h * 0.75, w * 0.22, h * 0.14);                 // une lame à affûter
+  ctx.fillStyle = '#FFE2A0'; ctx.beginPath(); ctx.arc(x + w * 0.42, y - h * 0.95, cell * 0.08, 0, Math.PI * 2); ctx.fill();   // la lanterne
+  const lg = ctx.createRadialGradient(x + w * 0.42, y - h * 0.95, 0, x + w * 0.42, y - h * 0.95, cell * 0.6); lg.addColorStop(0, 'rgba(255,226,160,0.7)'); lg.addColorStop(1, 'rgba(255,226,160,0)');
+  ctx.fillStyle = lg; ctx.beginPath(); ctx.arc(x + w * 0.42, y - h * 0.95, cell * 0.6, 0, Math.PI * 2); ctx.fill();
+  ctx.font = "600 9px 'Cinzel', Georgia, serif"; ctx.textAlign = 'center'; ctx.fillStyle = 'rgba(255,233,200,0.9)'; ctx.fillText('ÉTABLI', x, y + h / 2 + cell * 0.42);
+}
 for (const id in WORLD.zones) WORLD.zones[id].id = id;
 let worldMode = false, world = null, zdoors = [], zdoorLock = -1, pendingZone = null, pendingFrom = null, zoneEntry = { x: 0, y: 0 }, pendingBanner = null;
 function withSeed(seed, fn){ const r = Math.random; Math.random = mulberry(seed); try { return fn(); } finally { Math.random = r; } }
@@ -1818,7 +1930,7 @@ function seals(region){ return sealZones(region).filter((id) => world.zones[id].
 // ce qui retient une porte (null : elle s'ouvre)
 function doorBlock(from, to){
   const zf = WORLD.zones[from], zt = WORLD.zones[to];
-  if (zf.boss) return null;                                                   // d'un donjon, on peut toujours fuir
+  if (zf.boss || zf.camp || zt.camp) return null;                             // d'un donjon on peut toujours fuir ; un refuge est toujours ouvert
   if (zt.boss){ const n = seals(zt.region); return n < 3 ? 'grande porte : ' + n + ' / 3 sceaux' : null; }
   if (zt.apres && zt.region !== zf.region && !world.zones[zt.apres].down) return 'elle cédera quand ' + WORLD.zones[zt.apres].boss.nom + ' tombera';
   if (zf.apres && zt.region !== zf.region) return null;                       // retour vers la région d'avant : ouvert
@@ -1840,8 +1952,9 @@ function setStageZone(id){
 let pushX = 0, pushY = 0, zoneDoorRooms = new Set();
 function pairIndex(key, n){ let h = 7; for (let k = 0; k < key.length; k++) h = (h * 31 + key.charCodeAt(k)) >>> 0; return 1 + (h % Math.max(1, n - 2)); }
 function zoneDoorSpecs(id){
-  const z = WORLD.zones[id], c = z.g[0], r = z.g[1], out = [];
+  const z = WORLD.zones[id], c = z.g ? z.g[0] : 0, r = z.g ? z.g[1] : 0, out = [];
   for (const l of z.links){
+    if (z.camp || WORLD.zones[l.to].camp){ const j = pairIndex('camp-' + (z.camp ? id : l.to), Ry), i = l.dx < 0 ? 0 : Rx - 1; out.push({ to: l.to, dx: l.dx, dy: 0, i, j }); continue; }
     const key = l.dy ? 'v' + c + ',' + Math.min(r, r + l.dy) : 'h' + Math.min(c, c + l.dx) + ',' + r;
     if (l.dy){ const i = pairIndex(key, Rx), j = l.dy < 0 ? 0 : Ry - 1; out.push({ to: l.to, dx: 0, dy: l.dy, i, j }); }
     else { const j = pairIndex(key, Ry), i = l.dx < 0 ? 0 : Rx - 1; out.push({ to: l.to, dx: l.dx, dy: 0, i, j }); }
@@ -1855,7 +1968,8 @@ function enterZone(id, from, viaSlide){
   worldMode = true; world.cur = id; world.zones[id].seen = true;
   const z = WORLD.zones[id], st = world.zones[id];
   stageIdx = Math.max(1, z.diff);
-  withSeed(z.seed, () => { setStageZone(id); zoneDoorRooms = new Set(); newMaze(); placeZoneDoors(id); });
+  etabli = null; etabliLock = false;
+  withSeed(z.seed, () => { setStageZone(id); zoneDoorRooms = new Set(); newMaze(); if (z.camp) campLayout(zoneDoorSpecs(id)[0].j); placeZoneDoors(id); });
   treasures = []; particles = []; rings = []; texts = [];
   withSeed(z.seed + 11, setupVault);
   if (!z.boss && !vault) st.unlocked = true;            // garde-fou : une zone sans énigme posable ne doit jamais enfermer
@@ -2014,6 +2128,7 @@ function openMap(){
   const rr = (x, y, w, h, r) => { g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r); g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath(); };
   const fs = Math.max(9, Math.min(11.5, tw * 0.085));
   for (const id in WORLD.zones){
+    if (WORLD.zones[id].camp) continue;                 // les refuges n'ont pas de case : un repère sur le bord de leur zone
     const z = WORLD.zones[id], st = world.zones[id], p = T(id), x = p[0] + gap / 2, y = p[1] + gap / 2, w = tw - gap, h = th - gap;
     g.save(); rr(x, y, w, h, 8); g.clip();
     if (art){
@@ -2038,7 +2153,14 @@ function openMap(){
     if (here){ g.fillStyle = '#FFE9C8'; g.beginPath(); g.arc(x + w / 2, y + h / 2 - 6, 6, 0, Math.PI * 2); g.fill(); g.lineWidth = 2; g.strokeStyle = 'rgba(40,24,10,0.9)'; g.stroke(); }
   }
   // les portes : un petit seuil sur le bord partagé, doré si on peut passer
+  for (const id in CAMPS){
+    const c = CAMPS[id], hs = world.zones[c.host]; if (!hs.seen) continue;
+    const p = T(c.host), cx = p[0] + tw / 2 + c.side * (tw / 2 - 14), cy = p[1] + th * 0.36, seen = world.zones[id].seen;
+    g.fillStyle = seen ? '#FFB070' : 'rgba(255,176,112,0.55)'; g.strokeStyle = 'rgba(30,16,6,0.95)'; g.lineWidth = 1.2;
+    g.beginPath(); g.moveTo(cx - 8, cy - 3); g.lineTo(cx + 6, cy - 3); g.lineTo(cx + 9, cy - 7); g.lineTo(cx + 9, cy - 1); g.lineTo(cx + 4, cy + 1); g.lineTo(cx + 3, cy + 6); g.lineTo(cx - 5, cy + 6); g.lineTo(cx - 6, cy + 1); g.closePath(); g.fill(); g.stroke();
+  }
   for (const id in WORLD.zones) for (const l of WORLD.zones[id].links){
+    if (WORLD.zones[id].camp || WORLD.zones[l.to].camp) continue;
     if (id > l.to || !(known(id) && known(l.to)) || !(world.zones[id].seen || world.zones[l.to].seen)) continue;
     const p = T(id), open = !doorBlock(id, l.to) || !doorBlock(l.to, id);
     const cx = p[0] + tw / 2 + l.dx * tw / 2, cy = p[1] + th / 2 + l.dy * th / 2;
@@ -2089,6 +2211,7 @@ function collectTreasure(t){
     buzz(15);
   }
   stageGot++;
+  addEclats(t.kind === 'coeur' ? 10 : (t.kind === 'joyau' ? 5 : 1));
   if (worldMode) worldQuota(); else if (!exitP && stageGot >= stageQuota()) openExit();
 }
 
@@ -2171,6 +2294,7 @@ function farRooms(minD){
 }
 function spawnEnemies(){
   enemies = [];
+  if (inCamp()) return;                              // un refuge : aucun ennemi
   if (bossZone()){ if (!world.zones[world.cur].down) enemies.push(makeColosse()); return; }   // dans un donjon, le colosse seul
   const nS = S().scarab, nG = S().garde;
   const pool = farRooms(6);
@@ -2625,6 +2749,7 @@ Object.keys(FX_META).forEach((k) => {
 // les piliers) : le graphe du labyrinthe reste cohérent, et ajouter une
 // arête ne peut jamais briser la connectivité → équité intacte.
 function spawnPick(){
+  if (inCamp()){ pickT = 5; return; }
   const pr = playerRoom();
   const d = roomDistances(pr[0], pr[1]);
   const far = [], any = [];
@@ -3159,6 +3284,10 @@ window.addEventListener('keydown', (e) => {
   } else if (state === 'paused' && e.key !== 'Tab'){
     ui.pause.classList.add('hidden');
     state = 'playing';
+  } else if (state === 'etabli' && (e.key === 'Escape' || e.key === '3')){
+    closeEtabli();
+  } else if (state === 'etabli' && (e.key === '1' || e.key === '2')){
+    etabliAct(e.key === '1' ? 'renfort' : 'aiguiser');
   } else if (state === 'choice' && (e.key === '1' || e.key === '2' || e.key === '3')){
     pickBoon(+e.key - 1);
   }
@@ -3470,6 +3599,7 @@ function update(dt){
     updateEnemies(dt);
     updateVault(dt);
     updateCaches(dt);
+    updateEtabli();
     updateZoneDoors();
     if (exitP){
       exitP.t += dt;
@@ -3606,6 +3736,7 @@ function update(dt){
   flash = Math.max(0, flash - dt * 1.6);
 
   // HUD
+  eclatHud();
   const s = Math.floor(score);
   if (s !== displayedScore){ displayedScore = s; ui.score.textContent = s; }
   if (combo >= 2 && comboTimer > 0 && state === 'playing'){
@@ -5049,6 +5180,7 @@ function draw(){
   drawPortals();
   drawPuzzle();
   drawCaches();
+  drawEtabli();
   drawZoneDoors();
 
   // 2) scène vivante
