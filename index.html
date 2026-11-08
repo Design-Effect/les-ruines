@@ -366,8 +366,8 @@ const PICK_FIRST    = 10;    // première pioche (s)
 const PICK_RESPAWN  = 16;    // délai moyen entre pioches (s), après la fin de la fenêtre
 const PICK_LIFE     = 9;     // durée de la pioche au sol (s)
 const PICK_DURATION = 7;     // (avant le lot 13 : fenêtre de possession)
-const PICK_USES     = 6;     // lot 13 : la pioche est toujours en main, 6 coups (ennemi frappé ou mur cassé)
-const PICK_REGEN    = 6;     // elle s'aiguise toute seule : un coup rendu toutes les 6 s
+const PICK_USES     = 3;     // la pioche est toujours en main : 3 coups (6 au lot 13, « on casse trop », AbduLlah 08/11)
+const PICK_REGEN    = 15;    // elle s'aiguise toute seule : un coup rendu toutes les 15 s (6 s au lot 13)
 const DIG_HOLD      = 0.1;   // poussée maintenue contre le mur pour creuser (s)
 const STAGE_PTS     = 150;   // bonus de passage (× numéro de l'étage)
 const GRACE         = 1.6;   // répit à l'arrivée dans un étage : ennemis figés (s)
@@ -404,7 +404,7 @@ const STYLES = [
 // ---------- Les bonus (lot 9) : un choix à chaque passage, trois cartes visibles, rien au hasard ----------
 const BOONS = {
   casque:   { fam: 'def', nom: 'Casque de rechange', txt: 'un second casque, rendu à chaque étage', g: 'C' },
-  pioche:   { fam: 'def', nom: 'Pioche durable',     txt: '+3 coups avant qu\u2019elle s\u2019émousse',  g: 'P' },
+  pioche:   { fam: 'def', nom: 'Pioche durable',     txt: '+2 coups avant qu\u2019elle s\u2019émousse',  g: 'P' },
   velours:  { fam: 'def', nom: 'Pas de velours',     txt: 'les passages s\u2019annoncent plus tôt', g: 'V' },
   semelles: { fam: 'mov', nom: 'Semelles légères',   txt: 'tu cours 8 % plus vite',                  g: 'S' },
   souffle:  { fam: 'mov', nom: 'Souffle long',       txt: 'les bonus durent 1,5 fois plus',          g: 'B' },
@@ -1652,7 +1652,7 @@ function nearMiss(){
   buzz(20);
 }
 function pickDur(){ return PICK_DURATION + (boons.pioche ? 4 : 0); }
-function pickMax(){ return PICK_USES + (boons.pioche ? 3 : 0); }
+function pickMax(){ return PICK_USES + (boons.pioche ? 2 : 0); }
 function refillPick(){ pickUses = pickMax(); hasPick = true; pickRegenT = PICK_REGEN; }
 // un coup donné use la pioche ; à zéro elle est émoussée (toujours en main, elle ne frappe plus)
 function usePick(){
@@ -1879,12 +1879,21 @@ function updateZoneDoors(){
     if (k === zdoorLock) continue;
     const inRoom = cellOfX(player.x) === d.rx && cellOfY(player.y) === d.ry;
     const pushing = (pushX * d.dx + pushY * d.dy) > 0.6;
-    const close = Math.hypot(player.x - ctrX(d.cx), player.y - ctrY(d.cy)) < cell * 0.82;
+    // contre la porte : on mesure seulement dans le sens de la poussée (avant le 08/11, un décalage de 4 px de côté suffisait à la refuser)
+    const along = (ctrX(d.cx) - player.x) * d.dx + (ctrY(d.cy) - player.y) * d.dy;
+    const close = along < cell * 0.9;
     if (!inRoom || !pushing || !close) continue;
     const b = doorBlock(world.cur, d.to);
     if (!b){ travel(d.to, d); return; }
     if (tnow - d.msgT > 2.5){
       d.msgT = tnow; addText(ctrX(d.cx) - d.dx * cell, ctrY(d.cy) - 26 - d.dy * cell, b); snd('metalB', 0.4, 0.8); puff(ctrX(d.cx), ctrY(d.cy), 1, '#8A9B90', true);
+      // l'énigme qui garde les portes s'allume, pour qu'on sache où aller (retour d'AbduLlah, 08/11 : « je suis bloqué dans le niveau »)
+      if (vault && !vault.open && !world.zones[world.cur].unlocked && b.indexOf('énigme') >= 0){
+        const vx = ctrX(vault.dx), vy = ctrY(vault.dy);
+        rings.push({ x: vx, y: vy, r: cell * 1.4, life: 1 }); addRing(vx, vy); burst(vx, vy, reducedMotion ? 4 : 12, 140, '#FFD680', 'spark');
+        addText(vx, vy - 30, 'l\u2019énigme est ici', true); snd('bell', 0.35, 1.2, 0.12);
+        vaultHint[vault.kind] = false;                           // et son aide se redit quand on s'approche
+      }
       if (WORLD.zones[d.to].boss && !vaultHint.sceau){ vaultHint.sceau = true; addText(ctrX(d.cx), ctrY(d.cy) + 30, 'un sceau dort dans chaque chambre forte'); }
     }
   }
