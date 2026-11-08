@@ -404,6 +404,10 @@ const FOUILLE_PTS = 150;     // famille épuisée : butin de fouille
 const REGION_MAX    = 0.6;   // étendue maximale d'une vague (profondeurs avancées)
 const PORTAL_COL = ['#B98CF2', '#6FE0E8'];
 const WALK_W        = 0.3;   // cadence des jambes : radians de foulée par unité de marche (0,6 : trop vif, 4,6 foulées/s ; 0,3 : 2,3 foulées/s)
+const COEUR_MULT    = 20;    // le Cœur d'un donjon, laissé par son colosse (× un éclat, × combo)
+const COLOSSE_GRACE = 2.6;   // le colosse dort encore un instant quand tu entres dans son donjon (s)
+const COLOSSE_WOUND_R = 0.75; // la pierre fissure le colosse si un passage se ferme à moins de 0,75 case de son centre
+const COLOSSE_STUN  = 2.5;   // sonné après une fissure (s)
 const JOYAU_MULT    = 10;    // le joyau d'une chambre forte (× un éclat, × combo) ; il compte pour 3 dans le quota
 const MINUTE_TIME   = 6;     // plaque minutée : la porte reste ouverte (s)
 const BOOST_MUL     = 1.45;  // dalles d'élan (Les Mosaïques)
@@ -627,7 +631,7 @@ function newMaze(){
   for (;;){
     roomMask = makeMask(kind);
     vaultPick = null;
-    if (stageIdx >= 1) pickVaultRoom();
+    if (stageIdx >= 1 && !bossZone()) pickVaultRoom();     // un donjon n'a pas de chambre forte : c'est la salle du colosse
     openE = new Set();
     // génération : remonte-arrière itératif → labyrinthe parfait (connecté) dans le format
     const seen = new Uint8Array(Rx * Ry);
@@ -735,8 +739,14 @@ function makeWave(){
   const reg = Math.min(REGION_MAX, REGION + stageIdx * 0.015);
   const rw = Math.max(2, Math.round(Rx * reg));
   const rh = Math.max(2, Math.round(Ry * reg));
-  const x0 = Math.floor(Math.random() * (Rx - rw + 1));
-  const y0 = Math.floor(Math.random() * (Ry - rh + 1));
+  let x0 = Math.floor(Math.random() * (Rx - rw + 1));
+  let y0 = Math.floor(Math.random() * (Ry - rh + 1));
+  // pendant le combat, deux vagues sur trois se forment autour du colosse : c'est la pierre qui le bat
+  const co = enemies.find((e) => e.kind === 'colosse' && e.alive && e.awake);
+  if (co && (bossWaveN++ % 3) !== 2){
+    const bi = Math.max(0, Math.min(Rx - 1, Math.round((co.x - originX) / cell / 2 - 0.75))), bj = Math.max(0, Math.min(Ry - 1, Math.round((co.y - originY) / cell / 2 - 0.75)));
+    x0 = Math.max(0, Math.min(Rx - rw, bi - Math.floor(rw / 2))); y0 = Math.max(0, Math.min(Ry - rh, bj - Math.floor(rh / 2)));
+  }
   const inR = (i, j) => i >= x0 && i < x0 + rw && j >= y0 && j < y0 + rh;
 
   const cand = [];
@@ -833,6 +843,11 @@ function applyWave(){
   // la pierre qui se referme écrase les ennemis pris dedans ; ceux dont la cible vient de se murer font demi-tour
   for (const e of enemies){
     if (!e.alive) continue;
+    if (e.kind === 'colosse'){
+      if (e.awake && w.cClose.some((c) => Math.hypot(ctrX(c.x) - e.x, ctrY(c.y) - e.y) < cell * COLOSSE_WOUND_R)) woundColosse(e);
+      else if (!openCell(e.tx, e.ty)){ e.tx = e.cx; e.ty = e.cy; }
+      continue;
+    }
     const ecx = Math.max(0, Math.min(gw - 1, cellOfX(e.x))), ecy = Math.max(0, Math.min(gh - 1, cellOfY(e.y)));
     if (wall[wIdx(ecx, ecy)]) squashEnemy(e);
     else if (!openCell(e.tx, e.ty)){ e.tx = e.cx; e.ty = e.cy; }
@@ -847,7 +862,7 @@ function applyWave(){
     } else if (!openCell(t.tx, t.ty)){ t.tx = t.cx; t.ty = t.cy; }
   }
   if (w.cClose.length){
-    for (const e of enemies) if (e.alive) e.stun = Math.max(e.stun, STARTLE);
+    for (const e of enemies) if (e.alive && (e.kind !== 'colosse' || e.awake)) e.stun = Math.max(e.stun, STARTLE);
     playRumble();
     if (!reducedMotion) shake = Math.max(shake, 3);
     if (state === 'playing' && minD < cell * 2.5) buzz(25);
@@ -937,7 +952,7 @@ function setupVault(){
     for (let k = out.length - 1; k > 0; k--){ const m = Math.floor(Math.random() * (k + 1)); const t = out[k]; out[k] = out[m]; out[m] = t; }
     return out;
   };
-  const kind = pickOf(['sequence', 'cle', 'minute']);
+  const kind = (worldMode && world && WORLD.zones[world.cur].sceau) || pickOf(['sequence', 'cle', 'minute']);   // en Aventure, l'énigme d'une zone à sceau est fixe
   vault = { kind, cx: 2 * v.i + 1, cy: 2 * v.j + 1, dx: v.dx, dy: v.dy, open: false, step: 0, timer: 0, plates: [], order: [], key: null, near: false };
   const cellPos = (r) => ({ cx: 2 * r[0] + 1, cy: 2 * r[1] + 1 });
   if (kind === 'sequence'){
@@ -1172,22 +1187,42 @@ function pickBoon(k){
   renderBoonHud();
   ui.boons.classList.add('hidden');
   snd('click4', 0.6, 1.0); snd('latch', 0.5, 1.1, 0.04); snd('sw26', 0.35, 1.2, 0.08);
-  if (worldMode){ state = 'playing'; saveWorld(); } else startTransition();
+  if (worldMode){ state = 'playing'; saveWorld(); if (pendingBanner){ showBanner(pendingBanner[0], pendingBanner[1]); pendingBanner = null; } } else startTransition();
 }
-// ---------- Le monde (lot 10) : des zones reliées par des portes, un royaume de cinq zones ----------
+// ---------- Le monde (lots 10 et 12) : douze zones et trois donjons reliés par des portes ----------
 // Chaque zone a sa graine : son labyrinthe est le même à chaque visite. Les vagues, les trésors et les ennemis, eux, varient.
+// Trois régions. Chacune finit par un donjon fermé par une grande porte à trois sceaux (un par chambre forte de la région) ;
+// le colosse du donjon tombé, une porte des Galeries cède sur la région suivante (apres).
 const WORLD = { start: 'galeries', zones: {
-  galeries: { nom: 'Les Galeries', style: 0,  seed: 1101, diff: 0, quota: 8,  doors: ['caverne', 'puits'],           map: [0.5, 0.82] },
-  caverne:  { nom: 'La Caverne',   style: 1,  seed: 2202, diff: 1, quota: 9,  doors: ['galeries', 'cendre'],         map: [0.2, 0.58] },
-  puits:    { nom: 'Le Puits',     style: 2,  seed: 3303, diff: 1, quota: 9,  doors: ['galeries', 'cendre'],         map: [0.8, 0.58] },
-  cendre:   { nom: 'La Cendre',    style: 3,  seed: 4404, diff: 2, quota: 10, doors: ['caverne', 'puits', 'donjon'], map: [0.5, 0.36] },
-  donjon:   { nom: 'Le Donjon',    style: 12, seed: 5505, diff: 3, quota: 12, doors: ['cendre'],                     map: [0.5, 0.13] },
+  galeries:    { nom: 'Les Galeries',   style: 0,  seed: 1101, diff: 0, quota: 8,  region: 'ouest',  doors: ['caverne', 'puits', 'citernes', 'marais'], map: [0.50, 0.90] },
+  caverne:     { nom: 'La Caverne',     style: 1,  seed: 2202, diff: 1, quota: 9,  region: 'ouest',  doors: ['galeries', 'cendre'],                    map: [0.10, 0.66], sceau: 'sequence' },
+  puits:       { nom: 'Le Puits',       style: 2,  seed: 3303, diff: 1, quota: 9,  region: 'ouest',  doors: ['galeries', 'cendre'],                    map: [0.28, 0.58], sceau: 'minute' },
+  cendre:      { nom: 'La Cendre',      style: 3,  seed: 4404, diff: 2, quota: 10, region: 'ouest',  doors: ['caverne', 'puits', 'donjon'],            map: [0.20, 0.33], sceau: 'cle' },
+  donjon:      { nom: 'Le Donjon',      style: 12, seed: 5505, diff: 3, quota: 12, region: 'ouest',  doors: ['cendre'],                                map: [0.17, 0.11], hint: 'un colosse garde ces murs',
+                 boss: { nom: 'le Colosse de cendre', hp: 3, speed: 1.7, col: [255, 140, 70] } },
+  citernes:    { nom: 'Les Citernes',   style: 6,  seed: 6606, diff: 2, quota: 10, region: 'centre', apres: 'donjon',    doors: ['galeries', 'scriptorium', 'jardin'], map: [0.50, 0.73] },
+  scriptorium: { nom: 'Le Scriptorium', style: 7,  seed: 7707, diff: 2, quota: 10, region: 'centre', doors: ['citernes', 'geode'],                     map: [0.44, 0.47], sceau: 'sequence' },
+  jardin:      { nom: 'Le Jardin',      style: 8,  seed: 8808, diff: 3, quota: 10, region: 'centre', doors: ['citernes', 'geode'],                     map: [0.64, 0.53], sceau: 'cle' },
+  geode:       { nom: 'La Géode',       style: 10, seed: 9909, diff: 3, quota: 11, region: 'centre', doors: ['scriptorium', 'jardin', 'citadelle'],     map: [0.52, 0.30], sceau: 'minute' },
+  citadelle:   { nom: 'La Citadelle',   style: 12, seed: 1212, diff: 4, quota: 12, region: 'centre', doors: ['geode'],                                 map: [0.50, 0.11], hint: 'un colosse garde ces murs',
+                 boss: { nom: 'le Colosse de cristal', hp: 4, speed: 1.85, col: [190, 130, 255] } },
+  marais:      { nom: 'Le Marais',      style: 11, seed: 1313, diff: 3, quota: 10, region: 'est',    apres: 'citadelle', doors: ['galeries', 'dunes', 'mosaiques'],  map: [0.84, 0.86] },
+  dunes:       { nom: 'Les Dunes',      style: 4,  seed: 1414, diff: 3, quota: 11, region: 'est',    doors: ['marais', 'glaciere'],                    map: [0.91, 0.62], sceau: 'minute' },
+  mosaiques:   { nom: 'Les Mosaïques',  style: 9,  seed: 1515, diff: 4, quota: 11, region: 'est',    doors: ['marais', 'glaciere'],                    map: [0.77, 0.70], sceau: 'sequence' },
+  glaciere:    { nom: 'La Glacière',    style: 5,  seed: 1616, diff: 4, quota: 12, region: 'est',    doors: ['dunes', 'mosaiques', 'forteresse'],      map: [0.84, 0.36], sceau: 'cle' },
+  forteresse:  { nom: 'La Forteresse',  style: 12, seed: 1717, diff: 5, quota: 12, region: 'est',    doors: ['glaciere'],                              map: [0.83, 0.11], hint: 'un colosse garde ces murs',
+                 boss: { nom: 'le Colosse de glace', hp: 5, speed: 2.0, col: [140, 210, 255] } },
 } };
-let worldMode = false, world = null, zdoors = [], zdoorLock = -1, pendingZone = null, pendingFrom = null, zoneEntry = { x: 0, y: 0 };
+for (const id in WORLD.zones) WORLD.zones[id].id = id;
+let worldMode = false, world = null, zdoors = [], zdoorLock = -1, pendingZone = null, pendingFrom = null, zoneEntry = { x: 0, y: 0 }, pendingBanner = null;
 function withSeed(seed, fn){ const r = Math.random; Math.random = mulberry(seed); try { return fn(); } finally { Math.random = r; } }
+function zoneState(id){
+  const B = WORLD.zones[id].boss;
+  return { got: 0, unlocked: false, boon: false, vaultOpen: false, vaultDone: false, seen: id === WORLD.start, hp: B ? B.hp : 0, down: false };
+}
 function newWorld(){
   const z = {};
-  for (const id in WORLD.zones) z[id] = { got: 0, unlocked: false, boon: false, vaultOpen: false, vaultDone: false, seen: id === WORLD.start };
+  for (const id in WORLD.zones) z[id] = zoneState(id);
   return { v: 1, cur: WORLD.start, zones: z, deaths: 0 };
 }
 function saveWorld(){
@@ -1196,15 +1231,40 @@ function saveWorld(){
   try { localStorage.setItem('vestiges-save', JSON.stringify({ world, score: Math.floor(score), boons })); } catch (e) {}
 }
 function loadWorldSave(){
-  try { const v = localStorage.getItem('vestiges-save'); if (v){ const o = JSON.parse(v); if (o && o.world && o.world.v === 1 && WORLD.zones[o.world.cur]) return o; } } catch (e) {}
+  try {
+    const v = localStorage.getItem('vestiges-save');
+    if (v){
+      const o = JSON.parse(v);
+      if (o && o.world && o.world.v === 1 && WORLD.zones[o.world.cur]){
+        // une sauvegarde d'avant l'agrandissement : les zones nouvelles s'ajoutent, rien ne se perd
+        for (const id in WORLD.zones){
+          const d = zoneState(id), s = o.world.zones[id];
+          if (!s) o.world.zones[id] = d; else for (const k in d) if (s[k] === undefined) s[k] = d[k];
+        }
+        return o;
+      }
+    }
+  } catch (e) {}
+  return null;
+}
+function bossZone(){ return worldMode && world ? WORLD.zones[world.cur].boss || null : null; }
+function sealZones(region){ const out = []; for (const id in WORLD.zones){ const z = WORLD.zones[id]; if (z.sceau && z.region === region) out.push(id); } return out; }
+function seals(region){ return sealZones(region).filter((id) => world.zones[id].vaultDone).length; }
+// ce qui retient une porte (null : elle s'ouvre)
+function doorBlock(from, to){
+  const zf = WORLD.zones[from], zt = WORLD.zones[to];
+  if (!zf.boss && !world.zones[from].unlocked) return 'scellée : ' + Math.min(stageGot, stageQuota()) + ' / ' + stageQuota() + ' éclats';
+  if (zt.boss){ const n = seals(zt.region); if (n < 3) return 'grande porte : ' + n + ' / 3 sceaux'; }
+  if (zt.apres && zt.region !== zf.region && !world.zones[zt.apres].down) return 'elle cédera quand ' + WORLD.zones[zt.apres].boss.nom + ' tombera';
   return null;
 }
 function setStageZone(id){
   const z = WORLD.zones[id];
   setStage(0, z.style);
   curStage.quota = z.quota;
-  curStage.waveMul = Math.max(0.85, 1.05 - 0.05 * z.diff);
-  curStage.scarab = [0, 1, 2, 2][z.diff]; curStage.garde = [0, 0, 1, 2][z.diff];
+  curStage.waveMul = Math.max(0.82, 1.05 - 0.05 * z.diff);
+  curStage.scarab = [0, 1, 2, 2, 3, 3][z.diff]; curStage.garde = [0, 0, 1, 2, 2, 3][z.diff];
+  if (z.boss){ curStage.scarab = 0; curStage.garde = 0; }
 }
 // les portes d'une zone : dans des salles éloignées du départ, au hasard de sa graine
 function placeZoneDoors(id){
@@ -1226,6 +1286,7 @@ function enterZone(id, from){
   withSeed(z.seed, () => { setStageZone(id); newMaze(); placeZoneDoors(id); });
   treasures = []; particles = []; rings = []; texts = [];
   withSeed(z.seed + 11, setupVault);
+  if (z.sceau && !vault) st.vaultDone = true;           // garde-fou : un sceau sans chambre forte serait introuvable
   if (vault && st.vaultOpen){
     vault.open = true; wall[wIdx(vault.dx, vault.dy)] = 0;
     if (st.vaultDone) treasures = treasures.filter((t) => t.kind !== 'joyau');
@@ -1239,29 +1300,33 @@ function enterZone(id, from){
   if (dr){ zoneEntry = { x: ctrX(dr.cx), y: ctrY(dr.cy) }; zdoorLock = zdoors.indexOf(dr); }
   else { const sr = startRoom(); zoneEntry = { x: ctrX(2 * sr[0] + 1), y: ctrY(2 * sr[1] + 1) }; zdoorLock = -1; }
   player.x = player.tx = zoneEntry.x; player.y = player.ty = zoneEntry.y; player.fx = 0; player.fy = -1;
-  waveTimer = 3; spawnT = 0.6; portalLock = -1; boostWas = false; tele = null;
-  layerDirty = true; makeSpores(); spawnEnemies(); grace = GRACE;
-  showBanner(z.nom.toUpperCase(), STYLES[z.style].hint || '');
+  waveTimer = 3; spawnT = 0.6; portalLock = -1; boostWas = false; tele = null; bossWaveN = 0;
+  layerDirty = true; makeSpores(); spawnEnemies(); grace = z.boss && !st.down ? COLOSSE_GRACE : GRACE;
+  showBanner(z.nom.toUpperCase(), z.boss && st.down ? 'le colosse est tombé' : (z.hint != null ? z.hint : (STYLES[z.style].hint || '')));
   saveWorld();
 }
 function worldQuota(){
   const st = world.zones[world.cur];
+  if (WORLD.zones[world.cur].boss) return;            // dans un donjon, c'est le colosse qui compte
   if (st.unlocked || stageGot < stageQuota()) return;
   st.unlocked = true;
   snd('plate', 0.8, 1); snd('door2', 0.5, 0.95, 0.05); snd('up', 0.5, 0.9, 0.1); buzz(30);
-  showBanner('LES PORTES S\u2019OUVRENT', 'cherche-les dans la zone');
+  showBanner('LES PORTES S’OUVRENT', 'cherche-les dans la zone');
   saveWorld();
-  if (!st.boon){ st.boon = true; reachExit(); }
+  if (!st.boon){ st.boon = true; pendingBanner = ['LES PORTES S’OUVRENT', 'cherche-les dans la zone']; reachExit(); }
 }
 function updateZoneDoors(){
   if (!worldMode || !zdoors.length || jump) return;
-  const st = world.zones[world.cur];
   if (zdoorLock >= 0){ const l = zdoors[zdoorLock]; if (l && Math.hypot(player.x - ctrX(l.cx), player.y - ctrY(l.cy)) > cell * 0.8) zdoorLock = -1; }
   for (let k = 0; k < zdoors.length; k++){
     const d = zdoors[k];
     if (k === zdoorLock || Math.hypot(player.x - ctrX(d.cx), player.y - ctrY(d.cy)) > cell * 0.34) continue;
-    if (st.unlocked) travel(d.to);
-    else if (tnow - d.msgT > 2.5){ d.msgT = tnow; addText(ctrX(d.cx), ctrY(d.cy) - 26, 'scellée : ' + Math.min(stageGot, stageQuota()) + ' / ' + stageQuota() + ' éclats'); snd('metalB', 0.4, 0.8); }
+    const b = doorBlock(world.cur, d.to);
+    if (!b) travel(d.to);
+    else if (tnow - d.msgT > 2.5){
+      d.msgT = tnow; addText(ctrX(d.cx), ctrY(d.cy) - 26, b); snd('metalB', 0.4, 0.8);
+      if (WORLD.zones[d.to].boss && !vaultHint.sceau){ vaultHint.sceau = true; addText(ctrX(d.cx), ctrY(d.cy) - 44, 'un sceau dort dans chaque chambre forte'); }
+    }
   }
 }
 function travel(to){
@@ -1277,24 +1342,35 @@ function respawnZone(){
   helmet = true; helmetExtra = boons.casque ? 1 : 0; invuln = INVULN; grace = GRACE; combo = 0; comboTimer = 0; jump = null; swing = null;
   tele = null; waveTimer = 3; hasPick = false; for (const k in fx) fx[k] = 0;
   spawnEnemies();
+  if (bossZone() && !world.zones[world.cur].down) grace = COLOSSE_GRACE;
   state = 'playing'; ui.hud.classList.add('visible'); flash = 0;
-  showBanner('TU REVIENS À L\u2019ENTRÉE', 'la pierre t\u2019a recouvert');
+  showBanner('TU REVIENS À L’ENTRÉE', bossZone() && !world.zones[world.cur].down ? 'le colosse garde ses fissures' : 'la pierre t’a recouvert');
   snd('up', 0.4, 0.9); saveWorld();
 }
+// les couleurs des trois sceaux d'une région : la mousse de chaque zone
+function sealCols(region){ return sealZones(region).map((id) => { const B = BIOMES[WORLD.zones[id].style]; return { id, c: 'rgb(' + (B.moss ? B.moss.join(',') : '200,170,90') + ')' }; }); }
 function drawZoneDoors(){
   if (!worldMode || !zdoors.length) return;
-  const st = world.zones[world.cur];
   for (const d of zdoors){
-    const x = ctrX(d.cx), y = ctrY(d.cy), w = cell * 0.62, h = cell * 0.86, pu = 0.5 + 0.5 * Math.sin(tnow * 2.4 + d.cx);
-    const dest = WORLD.zones[d.to], B = BIOMES[dest.style], big = dest.diff > world.zones[world.cur] ? 0 : 0;
+    const dest = WORLD.zones[d.to], big = !!dest.boss, open = !doorBlock(world.cur, d.to);
+    const x = ctrX(d.cx), y = ctrY(d.cy), w = cell * (big ? 0.8 : 0.62), h = cell * (big ? 0.98 : 0.86), pu = 0.5 + 0.5 * Math.sin(tnow * 2.4 + d.cx);
+    const B = BIOMES[dest.style];
     const gl = ctx.createRadialGradient(x, y, 0, x, y, cell * 1.2);
-    gl.addColorStop(0, st.unlocked ? 'rgba(255,214,140,' + (0.34 + 0.14 * pu).toFixed(3) + ')' : 'rgba(150,170,180,0.14)'); gl.addColorStop(1, 'rgba(255,214,140,0)');
+    gl.addColorStop(0, open ? 'rgba(255,214,140,' + (0.34 + 0.14 * pu).toFixed(3) + ')' : 'rgba(150,170,180,0.14)'); gl.addColorStop(1, 'rgba(255,214,140,0)');
     ctx.fillStyle = gl; ctx.beginPath(); ctx.arc(x, y, cell * 1.2, 0, Math.PI * 2); ctx.fill();
     ctx.beginPath(); ctx.moveTo(x - w / 2, y + h / 2); ctx.lineTo(x - w / 2, y - h * 0.1); ctx.arc(x, y - h * 0.1, w / 2, Math.PI, 0); ctx.lineTo(x + w / 2, y + h / 2); ctx.closePath();
-    ctx.fillStyle = st.unlocked ? 'rgba(255,236,190,0.9)' : 'rgba(24,30,28,0.92)'; ctx.fill();
-    ctx.lineWidth = 2.4; ctx.strokeStyle = st.unlocked ? '#FFD680' : 'rgba(170,190,196,0.8)'; ctx.stroke();
+    ctx.fillStyle = open ? 'rgba(255,236,190,0.9)' : 'rgba(24,30,28,0.92)'; ctx.fill();
+    ctx.lineWidth = big ? 3.2 : 2.4; ctx.strokeStyle = open ? '#FFD680' : 'rgba(170,190,196,0.8)'; ctx.stroke();
     ctx.fillStyle = 'rgb(' + (B.moss ? B.moss.join(',') : '200,170,90') + ')'; ctx.fillRect(x - w * 0.16, y - h * 0.3, w * 0.32, h * 0.62);   // le seuil : la couleur du monde de l'autre côté
-    if (!st.unlocked){ ctx.strokeStyle = 'rgba(200,215,220,0.9)'; ctx.lineWidth = 1.6; ctx.beginPath(); ctx.moveTo(x - w * 0.45, y - h * 0.2); ctx.lineTo(x + w * 0.45, y + h * 0.2); ctx.moveTo(x + w * 0.45, y - h * 0.2); ctx.lineTo(x - w * 0.45, y + h * 0.2); ctx.stroke(); }
+    if (!open){ ctx.strokeStyle = 'rgba(200,215,220,0.9)'; ctx.lineWidth = 1.6; ctx.beginPath(); ctx.moveTo(x - w * 0.45, y - h * 0.2); ctx.lineTo(x + w * 0.45, y + h * 0.2); ctx.moveTo(x + w * 0.45, y - h * 0.2); ctx.lineTo(x - w * 0.45, y + h * 0.2); ctx.stroke(); }
+    if (big && !WORLD.zones[world.cur].boss){
+      // la grande porte : trois logements, un par sceau de la région
+      sealCols(dest.region).forEach((s, k) => {
+        const px = x + (k - 1) * w * 0.36, py = y - h * 0.62, got = world.zones[s.id].vaultDone;
+        ctx.beginPath(); ctx.arc(px, py, cell * 0.12, 0, Math.PI * 2); ctx.fillStyle = got ? s.c : 'rgba(16,20,18,0.92)'; ctx.fill();
+        ctx.lineWidth = 1.6; ctx.strokeStyle = got ? '#FFF6DC' : s.c; ctx.stroke();
+      });
+    }
     ctx.font = "500 9px 'Cinzel', Georgia, serif"; ctx.textAlign = 'center'; ctx.fillStyle = 'rgba(240,234,217,0.85)'; ctx.fillText(dest.nom.replace(/^(La |Le |Les )/, '').toUpperCase(), x, y + h * 0.5 + 11);
   }
 }
@@ -1308,23 +1384,31 @@ function openMap(){
   const bgr = g.createLinearGradient(0, 0, 0, H2); bgr.addColorStop(0, '#0F1712'); bgr.addColorStop(1, '#1C2A22'); g.fillStyle = bgr; g.fillRect(0, 0, W2, H2);
   const P = (id) => [WORLD.zones[id].map[0] * W2, WORLD.zones[id].map[1] * H2];
   const known = (id) => world.zones[id].seen || Object.keys(WORLD.zones).some((o) => world.zones[o].seen && WORLD.zones[o].doors.indexOf(id) >= 0);
+  const R = Math.max(15, Math.min(22, W2 * 0.05));
   g.lineCap = 'round';
   for (const id in WORLD.zones) for (const to of WORLD.zones[id].doors){
     if (id > to) continue; if (!known(id) || !known(to)) continue;
-    const a = P(id), b = P(to), open = world.zones[id].unlocked || world.zones[to].unlocked;
-    g.strokeStyle = open ? 'rgba(255,214,128,0.8)' : 'rgba(170,190,196,0.35)'; g.lineWidth = open ? 4 : 2; g.setLineDash(open ? [] : [6, 6]);
+    const a = P(id), b = P(to), open = world.zones[id].seen && world.zones[to].seen;
+    g.strokeStyle = open ? 'rgba(255,214,128,0.8)' : 'rgba(170,190,196,0.35)'; g.lineWidth = open ? 3.4 : 2; g.setLineDash(open ? [] : [5, 6]);
     g.beginPath(); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); g.stroke();
   }
   g.setLineDash([]);
   for (const id in WORLD.zones){
     if (!known(id)) continue;
-    const p = P(id), z = WORLD.zones[id], B = BIOMES[z.style], seen = world.zones[id].seen, here = id === world.cur;
-    g.beginPath(); g.arc(p[0], p[1], 26, 0, Math.PI * 2);
+    const p = P(id), z = WORLD.zones[id], B = BIOMES[z.style], st = world.zones[id], seen = st.seen, here = id === world.cur;
+    if (z.boss){ g.beginPath(); g.rect(p[0] - R, p[1] - R, R * 2, R * 2); }
+    else { g.beginPath(); g.arc(p[0], p[1], R, 0, Math.PI * 2); }
     g.fillStyle = seen ? B.stone : 'rgba(40,48,44,0.8)'; g.fill();
-    g.lineWidth = here ? 4 : 2; g.strokeStyle = here ? '#FFE9C8' : (world.zones[id].unlocked ? '#FFD680' : 'rgba(170,190,196,0.6)'); g.stroke();
-    g.font = "600 12px 'Cinzel', Georgia, serif"; g.textAlign = 'center'; g.fillStyle = seen ? '#F0EAD9' : 'rgba(240,234,217,0.5)'; g.fillText(seen ? z.nom : '???', p[0], p[1] + 46);
-    if (here){ g.fillStyle = '#FFE9C8'; g.beginPath(); g.arc(p[0], p[1], 7, 0, Math.PI * 2); g.fill(); }
-    if (z.id === 'donjon' || id === 'donjon'){ g.strokeStyle = '#FFD680'; g.lineWidth = 2; g.strokeRect(p[0] - 12, p[1] - 12, 24, 24); }
+    g.lineWidth = here ? 4 : 2; g.strokeStyle = here ? '#FFE9C8' : (st.unlocked || st.down ? '#FFD680' : 'rgba(170,190,196,0.6)'); g.stroke();
+    if (seen && z.sceau){ g.beginPath(); g.arc(p[0] + R * 0.72, p[1] - R * 0.72, 4.5, 0, Math.PI * 2); g.fillStyle = st.vaultDone ? '#FFD680' : 'rgba(16,20,18,0.95)'; g.fill(); g.lineWidth = 1.2; g.strokeStyle = '#FFD680'; g.stroke(); }
+    g.font = "600 11px 'Cinzel', Georgia, serif"; g.textAlign = 'center'; g.fillStyle = seen ? '#F0EAD9' : 'rgba(240,234,217,0.5)';
+    g.fillText(seen ? z.nom : '???', p[0], p[1] + R + 14);
+    if (z.boss){
+      const sc = sealCols(z.region);
+      sc.forEach((s, k) => { g.beginPath(); g.arc(p[0] + (k - 1) * 11, p[1] + R + 24, 3.6, 0, Math.PI * 2); g.fillStyle = world.zones[s.id].vaultDone ? s.c : 'rgba(16,20,18,0.95)'; g.fill(); g.lineWidth = 1; g.strokeStyle = s.c; g.stroke(); });
+      if (st.down){ g.strokeStyle = '#FFD680'; g.lineWidth = 2.4; g.beginPath(); g.moveTo(p[0] - R * 0.5, p[1]); g.lineTo(p[0] - R * 0.1, p[1] + R * 0.4); g.lineTo(p[0] + R * 0.55, p[1] - R * 0.45); g.stroke(); }
+    }
+    if (here){ g.fillStyle = '#FFE9C8'; g.beginPath(); g.arc(p[0], p[1], 6, 0, Math.PI * 2); g.fill(); }
   }
   document.getElementById('worldmap').classList.remove('hidden');
   snd('click3', 0.5, 1.1);
@@ -1342,13 +1426,14 @@ function showBanner(title, sub){
 function collectTreasure(t){
   combo = comboTimer > 0 ? combo + 1 : 1;
   comboTimer = comboWin();
-  const pts = TREASURE_PTS * (t.kind === 'joyau' ? JOYAU_MULT : (t.big ? BIG_MULT : (t.kind === 'vag' ? VAG_MULT : 1))) * combo;
+  const pts = TREASURE_PTS * (t.kind === 'coeur' ? COEUR_MULT : (t.kind === 'joyau' ? JOYAU_MULT : (t.big ? BIG_MULT : (t.kind === 'vag' ? VAG_MULT : 1)))) * combo;
   const tc = 'rgb(' + tskin().glow.join(',') + ')';
   score += pts;
   collected++;
   if (combo > stat.bestCombo) stat.bestCombo = combo;
   if (t.big) stat.relics++;
-  if (t.kind === 'joyau'){ if (worldMode){ world.zones[world.cur].vaultDone = true; world.zones[world.cur].vaultOpen = true; } stat.joyau++; stageGot += 2; addText(t.x, t.y - 34, 'joyau !', true); }
+  if (t.kind === 'joyau'){ if (worldMode){ world.zones[world.cur].vaultDone = true; world.zones[world.cur].vaultOpen = true; } stat.joyau++; stageGot += 2; addText(t.x, t.y - 34, 'joyau !', true); if (worldMode && WORLD.zones[world.cur].sceau) takeSeal(t); }
+  if (t.kind === 'coeur') takeHeart(t);
   if (t.kind === 'vag'){ stat.vag++; addText(t.x, t.y - 34, 'vagabond !', true); }
   if (t.grp){ t.grp.left--; if (t.grp.left <= 0){ stat.filon++; addText(t.x, t.y - 34, 'filon !', true); } }
   addText(t.x, t.y - 14, '+' + pts, t.big || combo >= 3 || t.kind === 'vag');
@@ -1430,7 +1515,7 @@ function nextStage(){
 // Toujours visibles (lueur d'argile), toujours plus lents que toi, jamais cachés derrière un tirage.
 // Le scarabée longe les murs (règle de la main droite : sa route se lit) ; le gardien rôde puis te poursuit.
 const DIRS = [[1, 0], [0, 1], [-1, 0], [0, -1]];
-function enemyRad(e){ return cell * (e.kind === 'garde' ? 0.28 : 0.2); }
+function enemyRad(e){ return cell * (e.kind === 'colosse' ? 0.42 : (e.kind === 'garde' ? 0.28 : 0.2)); }
 function makeEnemy(kind, k){
   const i = k % Rx, j = (k - i) / Rx;
   const cx = 2 * i + 1, cy = 2 * j + 1;
@@ -1448,6 +1533,7 @@ function farRooms(minD){
 }
 function spawnEnemies(){
   enemies = [];
+  if (bossZone()){ if (!world.zones[world.cur].down) enemies.push(makeColosse()); return; }   // dans un donjon, le colosse seul
   const nS = S().scarab, nG = S().garde;
   const pool = farRooms(6);
   let n = 0;
@@ -1484,10 +1570,10 @@ function buildChaseField(){
 }
 function chooseNext(e){
   let dir = -1;
-  if (e.kind === 'garde' && chaseField){
+  if ((e.kind === 'garde' || e.kind === 'colosse') && chaseField){
     const here = chaseField[wIdx(e.cx, e.cy)];
-    if (here >= 0 && here <= (e.chasing ? GARDE_SIGHT + 6 : GARDE_SIGHT)){
-      if (!e.chasing){ e.chasing = true; playAlert(); addRing(e.x, e.y); }
+    if (here >= 0 && (e.kind === 'colosse' || here <= (e.chasing ? GARDE_SIGHT + 6 : GARDE_SIGHT))){
+      if (!e.chasing){ e.chasing = true; if (e.kind === 'garde'){ playAlert(); addRing(e.x, e.y); } }
       let best = here;
       for (let k = 0; k < 4; k++){
         const nx = e.cx + DIRS[k][0], ny = e.cy + DIRS[k][1];
@@ -1551,9 +1637,11 @@ function updateEnemies(dt){
   const frozen = fx.statue > 0 || grace > 0;
   for (const e of enemies){
     if (!e.alive){ e.respawn -= dt; if (e.respawn <= 0) respawnEnemy(e); continue; }
+    if (e.hitT > 0) e.hitT = Math.max(0, e.hitT - dt * 2);
     if (e.stun > 0){ e.stun -= dt; continue; }
+    if (e.kind === 'colosse' && !e.awake){ if (grace > 0 || state !== 'playing') continue; wakeColosse(e); }
     if (frozen) continue;
-    const sp = (e.kind === 'scarab' ? SCARAB_SPEED : (e.chasing ? GARDE_SPEED : GARDE_WANDER)) * (boons.sang ? 0.85 : 1);
+    const sp = (e.kind === 'colosse' ? bossZone().speed : (e.kind === 'scarab' ? SCARAB_SPEED : (e.chasing ? GARDE_SPEED : GARDE_WANDER))) * (boons.sang ? 0.85 : 1);
     if (!openCell(e.tx, e.ty)){ e.tx = e.cx; e.ty = e.cy; }
     const gx = ctrX(e.tx), gy = ctrY(e.ty);
     const dx = gx - e.x, dy = gy - e.y, dd = Math.hypot(dx, dy);
@@ -1566,9 +1654,10 @@ function updateEnemies(dt){
     e.legT += dt * sp * 4;
     e.stepT -= dt;
     if (e.stepT <= 0){
-      e.stepT = e.kind === 'scarab' ? 0.22 : 0.7;
-      const prox = Math.max(0, 1 - Math.hypot(e.x - player.x, e.y - player.y) / (cell * 7));
+      e.stepT = e.kind === 'scarab' ? 0.22 : (e.kind === 'colosse' ? 0.62 : 0.7);
+      const prox = Math.max(0, 1 - Math.hypot(e.x - player.x, e.y - player.y) / (cell * (e.kind === 'colosse' ? 11 : 7)));
       if (prox > 0.05) playEnemyStep(e.kind, prox);
+      if (e.kind === 'colosse') puff(e.x, e.y + cell * 0.35, 1, '#7A7268', true);   // le pas qui sonne se voit
     }
   }
   // ils ne tuent ni pendant le répit, ni pétrifiés, ni pendant un bond
@@ -1585,6 +1674,160 @@ function updateEnemies(dt){
         if (helmet){ loseHelmet(e); continue; }        // le casque encaisse un coup
         die('ennemi'); return;
       }
+    }
+  }
+}
+
+// ---------- Le Colosse (lot 12) : le gardien d'un donjon ----------
+// Il te poursuit toujours, plus lent que toi. La pioche l'assomme, seule la pierre le fissure :
+// un passage annoncé qui se referme sur lui. Pendant le combat, les vagues se forment autour de lui.
+let bossWaveN = 0;
+function makeColosse(){
+  const pr = playerRoom(), d = roomDistances(pr[0], pr[1]);
+  let bk = -1, bd = -1;
+  for (let k = 0; k < d.length; k++) if (roomMask[k] && d[k] > bd){ bd = d[k]; bk = k; }
+  if (bk < 0){ const pool = farRooms(3); bk = pool.length ? pool[0] : 0; }
+  const e = makeEnemy('colosse', bk);
+  e.awake = false; e.stepT = 0.6; e.hitT = 0;
+  return e;
+}
+function wakeColosse(e){
+  e.awake = true; e.chasing = true;
+  const B = bossZone();
+  showBanner(B.nom.toUpperCase() + ' S’ÉVEILLE', 'la pioche l’arrête, la pierre le fissure');
+  addRing(e.x, e.y); rings.push({ x: e.x, y: e.y, r: cell * 0.9, life: 1 });
+  puff(e.x, e.y, reducedMotion ? 2 : 6, '#8A8478', true);
+  if (!reducedMotion) shake = Math.max(shake, 4);
+  snd('door2', 0.8, 0.8); snd('creak1', 0.7, 0.8, 0.06); snd('metalB', 0.6, 0.85, 0.14); buzz(40);
+}
+// la salle la plus sûre autour de lui : une salle (jamais un passage), la plus loin de toi
+function colosseRoomNear(e){
+  const cx = cellOfX(e.x), cy = cellOfY(e.y);
+  let best = null, bd = -1;
+  for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++){
+    const x = cx + dx, y = cy + dy;
+    if (x % 2 !== 1 || y % 2 !== 1 || !openCell(x, y)) continue;
+    const dd = Math.hypot(ctrX(x) - player.x, ctrY(y) - player.y);
+    if (dd > bd){ bd = dd; best = [x, y]; }
+  }
+  return best;
+}
+function woundColosse(e){
+  const st = world.zones[world.cur], B = bossZone();
+  st.hp = Math.max(0, st.hp - 1); e.hitT = 1;
+  burst(e.x, e.y, reducedMotion ? 10 : 30, 230, 'rgb(' + B.col.join(',') + ')', 'spark');
+  burst(e.x, e.y, reducedMotion ? 4 : 14, 170, '#6E685E');
+  puff(e.x, e.y, 4, '#9A9284', true); addRing(e.x, e.y);
+  if (!reducedMotion) shake = Math.max(shake, 9);
+  flash = Math.max(flash, 0.12);
+  snd('mine4', 1, 0.85); snd('metalA', 0.8, 0.8, 0.02); snd('glassH', 0.55, 0.9, 0.05); snd('mine0', 0.6, 0.9, 0.09); buzz([40, 30, 60]);
+  if (st.hp <= 0){ fellColosse(e); saveWorld(); return; }
+  const r = colosseRoomNear(e);
+  if (r){ e.x = ctrX(r[0]); e.y = ctrY(r[1]); e.cx = e.tx = r[0]; e.cy = e.ty = r[1]; }
+  e.stun = COLOSSE_STUN;
+  addText(e.x, e.y - cell * 0.9, 'fissure ' + (B.hp - st.hp) + ' / ' + B.hp, true);
+  saveWorld();
+}
+function fellColosse(e){
+  const st = world.zones[world.cur], B = bossZone();
+  st.down = true; e.alive = false; e.respawn = 1e9;
+  const r = colosseRoomNear(e) || [cellOfX(e.x), cellOfY(e.y)];
+  const x = ctrX(r[0]), y = ctrY(r[1]);
+  for (let k = 0; k < (reducedMotion ? 3 : 8); k++) puff(x + (Math.random() - 0.5) * cell, y + (Math.random() - 0.5) * cell, 3, '#8A8478', true);
+  burst(x, y, reducedMotion ? 14 : 44, 260, '#7A7268');
+  burst(x, y, reducedMotion ? 8 : 26, 220, 'rgb(' + B.col.join(',') + ')', 'spark');
+  rings.push({ x, y, r: cell * 1.2, life: 1 }); addRing(x, y);
+  if (!reducedMotion) shake = Math.max(shake, 14);
+  snd('mine0', 1, 0.8); snd('mine2', 0.9, 0.85, 0.12); snd('door4', 0.8, 0.8, 0.3); snd('plate', 0.7, 0.85, 0.45); buzz([80, 40, 120]);
+  showBanner(B.nom.toUpperCase() + ' EST TOMBÉ', 'prends le cœur du donjon');
+  treasures.push({ i: (r[0] - 1) / 2, j: (r[1] - 1) / 2, big: true, kind: 'coeur', x, y, life: 1e9, rot: 0 });
+  snd('coins', 0.6, 1.0, 0.7); snd('bell', 0.5, 1.2, 0.8);
+}
+function takeHeart(t){
+  if (!worldMode) return;
+  const st = world.zones[world.cur], cur = world.cur;
+  stat.coeur = (stat.coeur || 0) + 1;
+  addText(t.x, t.y - 34, 'cœur du donjon !', true);
+  snd('bell', 0.6, 1.0, 0.05); snd('bell', 0.5, 1.33, 0.2); snd('up', 0.5, 1.0, 0.3);
+  st.unlocked = true;
+  let next = null; for (const id in WORLD.zones) if (WORLD.zones[id].apres === cur) next = id;
+  const ban = next ? ['UNE PORTE CÈDE AUX GALERIES', 'vers ' + WORLD.zones[next].nom.toLowerCase()]
+                   : (Object.keys(WORLD.zones).every((id) => !WORLD.zones[id].boss || world.zones[id].down) ? ['LE ROYAUME EST LIBRE', 'les trois colosses sont tombés'] : ['LE DONJON EST LIBRE', 'il reste des colosses debout']);
+  saveWorld();
+  if (!st.boon){ st.boon = true; pendingBanner = ban; reachExit(); } else showBanner(ban[0], ban[1]);
+}
+function takeSeal(t){
+  const r = WORLD.zones[world.cur].region, n = seals(r);
+  addText(t.x, t.y - 54, 'sceau ' + n + ' / 3', true);
+  rings.push({ x: t.x, y: t.y, r: cell * 0.7, life: 1 });
+  snd('latch', 0.7, 0.9, 0.12); snd('bell', 0.5, 1.5, 0.2);
+  if (n >= 3) showBanner('LES TROIS SCEAUX', 'la grande porte peut s’ouvrir');
+}
+// le colosse : un bloc de pierre cerclé de cuivre, une braise au cœur, deux bras lourds ; aucun visage
+function drawColosse(e){
+  const B = bossZone() || { col: [255, 140, 70], hp: 3 }, st = world.zones[world.cur];
+  const S = cell * 0.62, frozen = fx.statue > 0, sleep = !e.awake;
+  const walk = sleep || e.stun > 0 ? 0 : Math.sin(e.legT * 0.9);
+  const col = B.col.join(','), x = e.x, y = e.y - S * 0.15;
+  // lueur et ombre
+  const gl = ctx.createRadialGradient(x, y, 0, x, y, cell * 1.7);
+  gl.addColorStop(0, 'rgba(' + col + ',' + (sleep ? 0.12 : 0.28) + ')'); gl.addColorStop(1, 'rgba(' + col + ',0)');
+  ctx.fillStyle = gl; ctx.beginPath(); ctx.arc(x, y, cell * 1.7, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = 'rgba(0,0,0,0.42)'; ctx.beginPath(); ctx.ellipse(e.x, e.y + S * 0.62, S * 0.95, S * 0.3, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.save(); ctx.translate(x, y); ctx.lineJoin = 'round';
+  if (e.hitT > 0) ctx.translate((Math.random() - 0.5) * 3 * e.hitT, 0);
+  const stone = (a, b) => { const g = ctx.createLinearGradient(-S, -S, S, S); g.addColorStop(0, a); g.addColorStop(1, b); return g; };
+  const rr = (x0, y0, w, h, r) => { ctx.beginPath(); ctx.moveTo(x0 + r, y0); ctx.arcTo(x0 + w, y0, x0 + w, y0 + h, r); ctx.arcTo(x0 + w, y0 + h, x0, y0 + h, r); ctx.arcTo(x0, y0 + h, x0, y0, r); ctx.arcTo(x0, y0, x0 + w, y0, r); ctx.closePath(); };
+  // jambes : deux piliers qui alternent
+  for (const sd of [-1, 1]){
+    const lift = Math.max(0, walk * sd) * S * 0.16;
+    rr(sd * S * 0.42 - S * 0.17, S * 0.42 - lift, S * 0.34, S * 0.42, S * 0.08);
+    ctx.fillStyle = '#4A443C'; ctx.fill(); ctx.strokeStyle = 'rgba(16,12,8,0.9)'; ctx.lineWidth = 1.2; ctx.stroke();
+  }
+  // bras : deux blocs qui balancent
+  for (const sd of [-1, 1]){
+    const sw = walk * sd * S * 0.14;
+    rr(sd * S * 0.98 - S * 0.2, -S * 0.36 + sw, S * 0.4, S * 0.78, S * 0.14);
+    ctx.fillStyle = stone('#8A8276', '#4A443C'); ctx.fill(); ctx.strokeStyle = 'rgba(16,12,8,0.9)'; ctx.lineWidth = 1.2; ctx.stroke();
+    ctx.fillStyle = 'rgba(201,123,61,0.9)'; ctx.fillRect(sd * S * 0.98 - S * 0.2, -S * 0.02 + sw, S * 0.4, S * 0.09);
+  }
+  // corps
+  ctx.beginPath(); ctx.moveTo(-S * 0.78, -S * 0.5); ctx.lineTo(S * 0.78, -S * 0.5); ctx.lineTo(S * 0.62, S * 0.5); ctx.lineTo(-S * 0.62, S * 0.5); ctx.closePath();
+  ctx.fillStyle = stone('#958C7F', '#433D35'); ctx.fill(); ctx.strokeStyle = 'rgba(16,12,8,0.95)'; ctx.lineWidth = 1.5; ctx.stroke();
+  ctx.fillStyle = 'rgba(201,123,61,0.95)'; ctx.fillRect(-S * 0.74, -S * 0.2, S * 1.48, S * 0.1);
+  // tête : un bloc lisse, cerclé de cuivre (pas de traits)
+  rr(-S * 0.32, -S * 0.98, S * 0.64, S * 0.5, S * 0.12);
+  ctx.fillStyle = stone('#A39A8C', '#544D44'); ctx.fill(); ctx.strokeStyle = 'rgba(16,12,8,0.95)'; ctx.lineWidth = 1.3; ctx.stroke();
+  ctx.fillStyle = 'rgba(201,123,61,0.95)'; ctx.fillRect(-S * 0.32, -S * 0.66, S * 0.64, S * 0.08);
+  // la braise du cœur
+  const em = sleep ? 0.35 + 0.1 * Math.sin(tnow * 1.5) : 0.75 + 0.25 * Math.sin(tnow * 8);
+  const eg = ctx.createRadialGradient(0, S * 0.12, 0, 0, S * 0.12, S * 0.5);
+  eg.addColorStop(0, 'rgba(' + col + ',' + em.toFixed(3) + ')'); eg.addColorStop(1, 'rgba(' + col + ',0)');
+  ctx.fillStyle = eg; ctx.beginPath(); ctx.arc(0, S * 0.12, S * 0.5, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(0, -S * 0.04); ctx.lineTo(S * 0.15, S * 0.14); ctx.lineTo(0, S * 0.32); ctx.lineTo(-S * 0.15, S * 0.14); ctx.closePath();
+  ctx.fillStyle = 'rgba(' + col + ',' + Math.min(1, em + 0.2).toFixed(3) + ')'; ctx.fill();
+  // les fissures : une par coup de la pierre, qui luisent
+  const cracks = [[[-0.5, -0.45], [-0.3, -0.1], [-0.45, 0.2], [-0.25, 0.48]], [[0.55, -0.45], [0.35, -0.05], [0.5, 0.25]], [[-0.2, -0.95], [0.05, -0.7], [-0.05, -0.55]], [[0.2, 0.5], [0.05, 0.3], [0.25, 0.05]], [[-0.7, -0.1], [-0.55, 0.1], [-0.62, 0.4]]];
+  const n = B.hp - (st ? st.hp : B.hp);
+  ctx.strokeStyle = 'rgba(' + col + ',0.95)'; ctx.lineWidth = 1.8; ctx.lineCap = 'round';
+  for (let k = 0; k < Math.min(n, cracks.length); k++){
+    ctx.beginPath(); cracks[k].forEach((p, m) => (m ? ctx.lineTo : ctx.moveTo).call(ctx, p[0] * S, p[1] * S)); ctx.stroke();
+  }
+  if (frozen){ ctx.fillStyle = 'rgba(214,214,232,0.5)'; ctx.beginPath(); ctx.arc(0, 0, S * 1.15, 0, Math.PI * 2); ctx.fill(); }
+  ctx.restore();
+  // ses fissures restantes : des losanges au-dessus de lui
+  if (st && e.awake){
+    for (let k = 0; k < B.hp; k++){
+      const px = e.x + (k - (B.hp - 1) / 2) * cell * 0.3, py = e.y - S * 1.5, on = k < st.hp;
+      ctx.beginPath(); ctx.moveTo(px, py - 4); ctx.lineTo(px + 3.5, py); ctx.lineTo(px, py + 4); ctx.lineTo(px - 3.5, py); ctx.closePath();
+      ctx.fillStyle = on ? 'rgba(' + col + ',0.95)' : 'rgba(30,26,22,0.8)'; ctx.fill(); ctx.strokeStyle = 'rgba(16,12,8,0.9)'; ctx.lineWidth = 1; ctx.stroke();
+    }
+  }
+  if (e.stun > 0){
+    for (let k = 0; k < 3; k++){
+      const an = tnow * 5 + k * 2.09;
+      ctx.fillStyle = 'rgba(255,240,215,0.95)';
+      ctx.beginPath(); ctx.arc(e.x + Math.cos(an) * S * 0.8, e.y - S * 1.25 + Math.sin(an) * S * 0.25, 2, 0, Math.PI * 2); ctx.fill();
     }
   }
 }
@@ -2034,6 +2277,7 @@ function playSwing(){ snd('whoosh', 0.4, 1.7); }
 function playSmash(){ snd('mine4', 0.9, 1); snd('plate', 0.6, 1.1, 0.01); snd('glassH', 0.4, 1, 0.02); }
 function playSquash(){ snd('mine2', 0.7, 1); snd('soft', 0.5, 0.9, 0.02); snd('coins2', 0.5, 1, 0.05); }
 function playEnemyStep(kind, prox){
+  if (kind === 'colosse'){ snd('plate', 0.55 * prox, rnd(0.8, 0.88)); snd('mine0', 0.3 * prox, rnd(0.85, 0.95), 0.02); return; }
   if (kind === 'scarab') snd('tick2', 0.22 * prox, rnd(1.2, 1.5));
   else snd('plate', 0.28 * prox, rnd(1.2, 1.35));
 }
@@ -2599,7 +2843,7 @@ function update(dt){
       }
       if (t.kind === 'vag') moveVag(t, dt);
       const aimR = fx.aimant > 0 ? AIMANT_RANGE : (boons.poche ? 1.5 : 0);
-      if (aimR > 0 && t.kind !== 'vag' && t.kind !== 'joyau'){
+      if (aimR > 0 && t.kind !== 'vag' && t.kind !== 'joyau' && t.kind !== 'coeur'){
         const mx = player.x - t.x, my = player.y - t.y, md = Math.hypot(mx, my);
         if (md < cell * aimR && md > 1){
           const st = Math.min(md, cell * AIMANT_PULL * dt);
@@ -2725,7 +2969,8 @@ function update(dt){
   }
   if (state === 'playing' || state === 'transition'){
     const quota = stageQuota();
-    const gtxt = worldMode ? WORLD.zones[world.cur].nom + ' · ' + (world.zones[world.cur].unlocked ? 'les portes sont ouvertes' : Math.min(stageGot, quota) + ' / ' + quota)
+    const zb = worldMode ? WORLD.zones[world.cur].boss : null, zst = worldMode ? world.zones[world.cur] : null;
+    const gtxt = worldMode ? WORLD.zones[world.cur].nom + ' · ' + (zb ? (zst.down ? 'le colosse est tombé' : 'fissures ' + (zb.hp - zst.hp) + ' / ' + zb.hp) : (zst.unlocked ? 'portes ouvertes' : Math.min(stageGot, quota) + ' / ' + quota))
       : 'Étage ' + (stageIdx + 1) + ' · ' + (exitP ? 'le passage est ouvert' : Math.min(stageGot, quota) + ' / ' + quota);
     if (gtxt !== lastGoal){ ui.goal.textContent = gtxt; lastGoal = gtxt; }
   }
@@ -3671,7 +3916,7 @@ function drawTreasure(t){
   let a = 1;
   if (t.life < 1.2) a = (Math.sin(tnow * 18) > 0) ? 1 : 0.25;   // clignote avant de mourir
   const big = t.big, sk = tskin(), gc = sk.glow;
-  const s = cell * (t.kind === 'joyau' ? 0.54 : (big ? 0.44 : 0.30)) * (0.94 + 0.06 * Math.sin(t.rot * 2));
+  const s = cell * (t.kind === 'coeur' ? 0.62 : (t.kind === 'joyau' ? 0.54 : (big ? 0.44 : 0.30))) * (0.94 + 0.06 * Math.sin(t.rot * 2));
   const bob = Math.sin(t.rot * 0.9) * cell * 0.04;
   // lueur sur le sol
   const gr = s * (big ? 3.4 : 2.7);
@@ -3835,6 +4080,7 @@ function drawExit(){
 
 // les ennemis : lueur d'argile (le danger), ombre au sol, pétrifiés ils pâlissent
 function drawEnemy(e){
+  if (e.kind === 'colosse'){ drawColosse(e); return; }
   const frozen = fx.statue > 0;
   const R = cell * 0.34, a = frozen ? 0.18 : 0.3;
   const gl = ctx.createRadialGradient(e.x, e.y, 0, e.x, e.y, cell * 1.1);
